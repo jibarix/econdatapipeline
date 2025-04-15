@@ -32,11 +32,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_AUTO.XLS',
         'sheet_name': 'AS01',
         'data_location': 'A6:K18',
-        'table_name': 'auto_sales',
+        'table_name': 'autosales',
         'value_column': 'Sales',
         'value_type': 'int',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='auto_sales',
+            table_name='autosales',
             value_column='sales',
             value_type='INTEGER'
         ),
@@ -60,11 +60,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_CEMENT.XLS',
         'sheet_name': 'CD01',
         'data_location': 'A6:K18',
-        'table_name': 'cement_production',
+        'table_name': 'cementproduction',
         'value_column': 'Production',
         'value_type': 'float',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='cement_production',
+            table_name='cementproduction',
             value_column='production',
             value_type='DECIMAL(12,2)'
         ),
@@ -74,11 +74,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_ENERGY.XLS',
         'sheet_name': 'EEC01',
         'data_location': 'A6:K18',
-        'table_name': 'electricity_consumption',
+        'table_name': 'electricityconsumption',
         'value_column': 'Consumption',
         'value_type': 'float',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='electricity_consumption',
+            table_name='electricityconsumption',
             value_column='consumption',
             value_type='DECIMAL(12,2)'
         ),
@@ -88,11 +88,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_GAS.XLS',
         'sheet_name': 'GAS01',
         'data_location': 'A6:K18',
-        'table_name': 'gas_price',
+        'table_name': 'gasprice',
         'value_column': 'Price',
         'value_type': 'float',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='gas_price',
+            table_name='gasprice',
             value_column='price',
             value_type='DECIMAL(12,2)'
         ),
@@ -102,11 +102,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_GAS.XLS',
         'sheet_name': 'GAS02',
         'data_location': 'A6:K18',
-        'table_name': 'gas_consumption',
+        'table_name': 'gasconsumption',
         'value_column': 'Consumption',
         'value_type': 'float',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='gas_consumption',
+            table_name='gasconsumption',
             value_column='consumption',
             value_type='DECIMAL(12,2)'
         ),
@@ -116,11 +116,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_LABOR.XLS',
         'sheet_name': 'LF03',
         'data_location': 'A6:K18',
-        'table_name': 'labor_participation',
+        'table_name': 'laborparticipation',
         'value_column': 'Rate',
         'value_type': 'float',
         'create_table_sql': PERCENT_TABLE_SQL_TEMPLATE.format(
-            table_name='labor_participation',
+            table_name='laborparticipation',
             value_column='rate'
         ),
         'type': 'monthly'
@@ -129,11 +129,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_LABOR.XLS',
         'sheet_name': 'LF08',
         'data_location': 'A6:K18',
-        'table_name': 'unemployment_rate',
+        'table_name': 'unemploymentrate',
         'value_column': 'Rate',
         'value_type': 'float',
         'create_table_sql': PERCENT_TABLE_SQL_TEMPLATE.format(
-            table_name='unemployment_rate',
+            table_name='unemploymentrate',
             value_column='rate'
         ),
         'type': 'monthly'
@@ -142,11 +142,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_LABOR.XLS',
         'sheet_name': 'LF09',
         'data_location': 'A6:K18',
-        'table_name': 'employment_rate',
+        'table_name': 'employmentrate',
         'value_column': 'Rate',
         'value_type': 'float',
         'create_table_sql': PERCENT_TABLE_SQL_TEMPLATE.format(
-            table_name='employment_rate',
+            table_name='employmentrate',
             value_column='rate'
         ),
         'type': 'monthly'
@@ -155,11 +155,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_LABOR.XLS',
         'sheet_name': 'LF10',
         'data_location': 'A6:K18',
-        'table_name': 'unemployment_claims',
+        'table_name': 'unemploymentclaims',
         'value_column': 'Claims',
         'value_type': 'int',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='unemployment_claims',
+            table_name='unemploymentclaims',
             value_column='claims',
             value_type='INTEGER'
         ),
@@ -169,11 +169,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_PAYROLL.XLS',
         'sheet_name': 'PE05',
         'data_location': 'A6:K18',
-        'table_name': 'trade_employment',
+        'table_name': 'tradeemployment',
         'value_column': 'Employment',
         'value_type': 'float',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='trade_employment',
+            table_name='tradeemployment',
             value_column='employment',
             value_type='DECIMAL(12,2)'
         ),
@@ -183,11 +183,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_PRICE.XLS',
         'sheet_name': 'CPI01',
         'data_location': 'A6:K18',
-        'table_name': 'consumer_price_index',
+        'table_name': 'consumerpriceindex',
         'value_column': 'Index',
         'value_type': 'float',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='consumer_price_index',
+            table_name='consumerpriceindex',
             value_column='index',
             value_type='DECIMAL(12,2)'
         ),
@@ -197,11 +197,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_PRICE.XLS',
         'sheet_name': 'CPI05',
         'data_location': 'A6:K18',
-        'table_name': 'transportation_price_index',
+        'table_name': 'transportationpriceindex',
         'value_column': 'Index',
         'value_type': 'float',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='transportation_price_index',
+            table_name='transportationpriceindex',
             value_column='index',
             value_type='DECIMAL(12,2)'
         ),
@@ -211,11 +211,11 @@ SCRAPER_CONFIGS = {
         'file_name': 'I_RETAIL.XLS',
         'sheet_name': 'RS01',
         'data_location': 'A6:K18',
-        'table_name': 'retail_sales',
+        'table_name': 'retailsales',
         'value_column': 'Sales',
         'value_type': 'float',
         'create_table_sql': MONTHLY_TABLE_SQL_TEMPLATE.format(
-            table_name='retail_sales',
+            table_name='retailsales',
             value_column='sales',
             value_type='DECIMAL(12,2)'
         ),

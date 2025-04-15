@@ -19,11 +19,11 @@ CREATE INDEX IF NOT EXISTS idx_{table_name}_date ON {table_name} (date);
 # Configuration for FRED series
 FRED_SCRAPER_CONFIGS = {
     'federal_funds_rate': {
-        'table_name': 'federal_funds_rate',
+        'table_name': 'federalfundsrate',
         'value_column': 'Rate',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='federal_funds_rate',
+            table_name='federalfundsrate',
             value_column='rate',
             value_type='DECIMAL(12,3)'
         ),
@@ -34,11 +34,11 @@ FRED_SCRAPER_CONFIGS = {
     
     # New automotive industry indicators
     'auto_manufacturing_orders': {
-        'table_name': 'auto_manufacturing_orders',
+        'table_name': 'automanufacturingorders',
         'value_column': 'Orders',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='auto_manufacturing_orders',
+            table_name='automanufacturingorders',
             value_column='orders',
             value_type='DECIMAL(12,2)'
         ),
@@ -47,11 +47,11 @@ FRED_SCRAPER_CONFIGS = {
         'frequency': 'm'  # Monthly
     },
     'used_car_retail_sales': {
-        'table_name': 'used_car_retail_sales',
+        'table_name': 'usedcarretailsales',
         'value_column': 'Sales',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='used_car_retail_sales',
+            table_name='usedcarretailsales',
             value_column='sales',
             value_type='DECIMAL(12,2)'
         ),
@@ -60,11 +60,11 @@ FRED_SCRAPER_CONFIGS = {
         'frequency': 'm'  # Monthly
     },
     'domestic_auto_inventories': {
-        'table_name': 'domestic_auto_inventories',
+        'table_name': 'domesticautoinventories',
         'value_column': 'Inventories',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='domestic_auto_inventories',
+            table_name='domesticautoinventories',
             value_column='inventories',
             value_type='DECIMAL(12,3)'
         ),
@@ -73,11 +73,11 @@ FRED_SCRAPER_CONFIGS = {
         'frequency': 'm'  # Monthly
     },
     'domestic_auto_production': {
-        'table_name': 'domestic_auto_production',
+        'table_name': 'domesticautoproduction',
         'value_column': 'Production',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='domestic_auto_production',
+            table_name='domesticautoproduction',
             value_column='production',
             value_type='DECIMAL(12,1)'
         ),
@@ -86,11 +86,11 @@ FRED_SCRAPER_CONFIGS = {
         'frequency': 'm'  # Monthly
     },
     'liquidity_credit_facilities': {
-        'table_name': 'liquidity_credit_facilities',
+        'table_name': 'liquiditycreditfacilities',
         'value_column': 'Facilities',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='liquidity_credit_facilities',
+            table_name='liquiditycreditfacilities',
             value_column='facilities',
             value_type='DECIMAL(12,1)'
         ),
@@ -99,11 +99,11 @@ FRED_SCRAPER_CONFIGS = {
         'frequency': 'm'  # Monthly
     },
     'semiconductor_manufacturing_units': {
-        'table_name': 'semiconductor_manufacturing_units',
+        'table_name': 'semiconductormanufacturingunits',
         'value_column': 'Units',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='semiconductor_manufacturing_units',
+            table_name='semiconductormanufacturingunits',
             value_column='units',
             value_type='DECIMAL(12,4)'
         ),
@@ -112,11 +112,11 @@ FRED_SCRAPER_CONFIGS = {
         'frequency': 'm'  # Monthly
     },
     'aluminum_new_orders': {
-        'table_name': 'aluminum_new_orders',
+        'table_name': 'aluminumneworders',
         'value_column': 'Orders',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='aluminum_new_orders',
+            table_name='aluminumneworders',
             value_column='orders',
             value_type='DECIMAL(12,1)'
         ),
@@ -126,11 +126,11 @@ FRED_SCRAPER_CONFIGS = {
     },
     # New GDP indicators
     'real_gdp': {
-        'table_name': 'real_gdp',
+        'table_name': 'realgdp',
         'value_column': 'Value',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='real_gdp',
+            table_name='realgdp',
             value_column='value',
             value_type='DECIMAL(12,2)'
         ),
@@ -139,11 +139,11 @@ FRED_SCRAPER_CONFIGS = {
         'frequency': 'q'  # Quarterly
     },
     'gdp_now_forecast': {
-        'table_name': 'gdp_now_forecast',
+        'table_name': 'gdpnowforecast',
         'value_column': 'Forecast',
         'value_type': 'float',
         'create_table_sql': FRED_TABLE_SQL_TEMPLATE.format(
-            table_name='gdp_now_forecast',
+            table_name='gdpnowforecast',
             value_column='forecast',
             value_type='DECIMAL(12,4)'
         ),

@@ -432,18 +432,14 @@ class AzureConnector:
             True if all tables were created successfully, False otherwise
         """
         tables = [
-            # Economic indicator tables
-            "auto_sales", "bankruptcies", "cement_production", "electricity_consumption",
-            "gas_price", "gas_consumption", "labor_participation", "unemployment_rate",
-            "employment_rate", "unemployment_claims", "trade_employment", "consumer_price_index",
-            "transportation_price_index", "retail_sales", "imports",
-            # FRED data tables
-            "federal_funds_rate", "auto_manufacturing_orders", "used_car_retail_sales",
-            "domestic_auto_inventories", "domestic_auto_production", "liquidity_credit_facilities",
-            "semiconductor_manufacturing_units", "aluminum_new_orders", "real_gdp", "gdp_now_forecast",
-            # NYU Stern data table
-            "equity_risk_premium",
-            # Metadata and revision tracking tables
+            "autosales", "bankruptcies", "cementproduction", "electricityconsumption",
+            "gasprice", "gasconsumption", "laborparticipation", "unemploymentrate",
+            "employmentrate", "unemploymentclaims", "tradeemployment", "consumerpriceindex",
+            "transportationpriceindex", "retailsales", "imports",
+            "federalfundsrate", "automanufacturingorders", "usedcarretailsales",
+            "domesticautoinventories", "domesticautoproduction", "liquiditycreditfacilities",
+            "semiconductormanufacturingunits", "aluminumneworders", "realgdp", "gdpnowforecast",
+            "equityriskpremium",
             "datarevisions", "scrapermetadata"
         ]
         
