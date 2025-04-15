@@ -1,0 +1,85 @@
+# Economic Data Sources Documentation
+
+## Overview
+This project collects and processes economic indicators from multiple sources:
+1. **Economic Development Bank (EDB) of Puerto Rico** - Local economic indicators
+2. **Federal Reserve Economic Data (FRED)** - US national economic indicators
+3. **NYU Stern School of Business** - Equity Risk Premium data
+
+## Data Sources
+
+### EDB Puerto Rico
+Data is extracted from Excel files published on the Economic Development Bank of Puerto Rico website:
+- URL: https://www.bde.pr.gov/BDE/PREDDOCS/
+- Data organization: Fiscal year format (July-June)
+- Update frequency: Monthly for most indicators
+
+### FRED API
+Data is fetched directly from the Federal Reserve Economic Data API:
+- Base URL: https://api.stlouisfed.org/fred/series/observations
+- Authentication: Requires FRED API key (stored as environment variable)
+- Update frequency: Varies by indicator
+
+### NYU Stern
+Equity Risk Premium data is extracted from Excel files published by Aswath Damodaran:
+- URL: https://pages.stern.nyu.edu/~adamodar/pc/implprem/ERPbymonth.xlsx
+- Update frequency: Monthly
+
+## Available Datasets
+
+### Puerto Rico Economic Indicators
+- `auto_sales`: Automobile and light truck sales
+- `bankruptcies`: Bankruptcy filings
+- `cement_production`: Cement production (94lb. bags)
+- `electricity_consumption`: Electric energy consumption (mm kWh)
+- `gas_price`: Gasoline average retail price (dollars per gallon)
+- `gas_consumption`: Gasoline consumption (million of gallons)
+- `labor_participation`: Labor force participation rate (%)
+- `unemployment_rate`: Unemployment rate (%)
+- `employment_rate`: Employment rate (%)
+- `unemployment_claims`: Unemployment insurance initial file claims
+- `trade_employment`: Payroll employment in trade sector (000's)
+- `consumer_price_index`: Consumer price index (Dec. 2006=100)
+- `transportation_price_index`: Transportation price index (Dec. 2006=100)
+- `retail_sales`: Total retail store sales (million $)
+- `imports`: External trade imports (million $)
+
+### US Economic Indicators from FRED
+- `federal_funds_rate`: Federal funds effective rate (%)
+- `auto_manufacturing_orders`: Manufacturers' new orders for motor vehicles and parts (millions $)
+- `used_car_retail_sales`: Retail sales from used car dealers (millions $)
+- `domestic_auto_inventories`: Domestic auto inventories (thousands of units)
+- `domestic_auto_production`: Domestic auto production (thousands of units)
+- `liquidity_credit_facilities`: Assets: Liquidity and credit facilities loans (Wednesday level)
+- `semiconductor_manufacturing_units`: Industrial production of semiconductor components (index)
+- `aluminum_new_orders`: Manufacturers' new orders for aluminum and nonferrous metal products
+- `real_gdp`: Real Gross Domestic Product (% change at annual rate, quarterly)
+- `gdp_now_forecast`: GDPNow forecast from Federal Reserve Bank of Atlanta (% change at annual rate, quarterly)
+
+### Financial Market Data
+- `equity_risk_premium`: NYU Stern data on Equity Risk Premium with T-bond rates
+
+## Data Revision Tracking
+The system tracks data revisions over time:
+- All historical changes to data points are stored in the `data_revisions` table
+- Each revision records the dataset, date, field, old value, new value, and when the revision was detected
+- This enables analysis of data reliability and correction patterns
+
+## Usage
+- View latest data with `python view_data.py --dataset [dataset_name]`
+- List all available datasets with `python view_data.py --list`
+- Run data collection with `python main.py`
+- Test specific FRED indicators with `python test_fred_indicators.py`
+- Test new GDP indicators with `python test_gdp_indicators.py`
+
+## Data Storage
+All data is stored in a Supabase PostgreSQL database with standardized schemas:
+- Each dataset has its own table with consistent naming
+- Common fields include: id, date, and the value column specific to that dataset
+- Metadata about scraper runs is stored in the `scraper_metadata` table
+- Data revisions are tracked in the `data_revisions` table
+
+## Recent Additions
+- **March 2025**: Added Real GDP and GDPNow forecast indicators
+  - Real GDP: Quarterly data from FRED (GDPC1)
+  - GDPNow: Atlanta Fed's real-time GDP forecast (GDPNOW)

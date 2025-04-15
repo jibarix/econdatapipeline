@@ -1,0 +1,10 @@
+pandas
+requests
+supabase
+python-dotenv
+openpyxl
+xlrd
+matplotlib
+statsmodels
+prophet
+tabulate
