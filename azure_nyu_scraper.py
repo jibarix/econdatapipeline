@@ -1,28 +1,28 @@
 """
-Module for fetching economic data from the FRED API with proper quarterly date handling.
+Module for fetching NYU Stern Equity Risk Premium data.
 Azure-adapted version.
 """
-import os
 import logging
 import pandas as pd
 import requests
+import json
+from io import BytesIO
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
-# Import Azure connector instead of Supabase
 from azure_connector import AzureConnector
 from azure_data_tracker import smart_update
 
-logger = logging.getLogger('fred_scraper')
+logger = logging.getLogger('nyu_scraper')
 
-class FREDScraper:
+class NYUSternScraper:
     """
-    Scraper for FRED (Federal Reserve Economic Data) API.
+    Scraper for NYU Stern Equity Risk Premium data.
     """
     
     def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
         """
-        Initialize the FRED scraper.
+        Initialize the NYU Stern scraper.
         
         Args:
             azure_connector: Azure connector instance
@@ -30,173 +30,148 @@ class FREDScraper:
         """
         self.azure = azure_connector
         self.table_name = config['table_name']
-        self.value_column = config['value_column']
-        self.value_type = config.get('value_type', 'float')
-        self.fred_series_id = config['fred_series_id']
-        self.frequency = config.get('frequency', 'm')  # Default to monthly
+        self.url = config['url']
+        self.sheet_name = config['sheet_name']
         
-        # Try to get API key from Key Vault first, then environment variable
-        try:
-            if azure_connector.secret_client:
-                self.api_key = azure_connector.get_secret("FRED-API-KEY")
-            else:
-                # Fallback to environment variable
-                self.api_key = os.environ.get("FRED_API_KEY")
-        except Exception as e:
-            logger.warning(f"Could not retrieve FRED API key from Key Vault: {e}")
-            # Fallback to environment variable
-            self.api_key = os.environ.get("FRED_API_KEY")
-        
-        if not self.api_key:
-            raise ValueError("FRED API key not found in Key Vault or environment variables")
-        
-        # Import the start date from fred_config
-        from fred_config import FRED_START_DATE
-        self.start_date = FRED_START_DATE
-    
     def create_table(self) -> None:
         """Create the database table if it doesn't exist"""
         self.azure.create_table(self.table_name)
-    
-    def fetch_fred_data(self, start_date: Optional[str] = None) -> Optional[pd.DataFrame]:
-        """
-        Fetch data from FRED API.
-        
-        Args:
-            start_date: Optional start date in YYYY-MM-DD format
+
+    def download_excel(self) -> Optional[bytes]:
+        """Download Excel file from specified URL"""
+        try:
+            # First check if we have cached data in blob storage
+            container_name = "raw-files"
+            blob_name = "NYU_ERP.xlsx"
             
-        Returns:
-            DataFrame with date and value columns or None if failed
+            # Ensure container exists
+            self.azure.create_container(container_name)
+            
+            # Try to download from blob storage first
+            excel_content = self.azure.download_blob(container_name, blob_name)
+            
+            if excel_content:
+                logger.info("Retrieved NYU Stern data from blob storage")
+                return excel_content
+                
+            # If not in blob storage, download from URL
+            response = requests.get(self.url)
+            response.raise_for_status()
+            excel_content = response.content
+            
+            # Save to blob storage for future use
+            self.azure.upload_blob(container_name, blob_name, excel_content)
+            logger.info("Downloaded NYU Stern data from URL and saved to blob storage")
+            
+            return excel_content
+        except Exception as e:
+            logger.exception(f"Error downloading NYU Stern data: {e}")
+            return None
+
+    def process_data(self) -> pd.DataFrame:
         """
-        # First check if we have cached data in blob storage
-        container_name = "raw-files"
-        blob_name = f"fred_{self.fred_series_id}.json"
+        Download and process the NYU Stern ERP data.
         
-        # Ensure container exists
-        self.azure.create_container(container_name)
-        
-        base_url = "https://api.stlouisfed.org/fred/series/observations"
-        
-        params = {
-            "series_id": self.fred_series_id,
-            "api_key": self.api_key,
-            "file_type": "json",
-            "frequency": self.frequency,  # Set from config
-            "sort_order": "desc",
-            "limit": 1000  # Get more historical data
-        }
-        
-        # Use the provided start date, or fall back to the default one
-        params["observation_start"] = start_date if start_date else self.start_date
+        Returns:
+            Processed DataFrame with date and ERP values
+        """
+        # Download the Excel file
+        excel_content = self.download_excel()
+        if not excel_content:
+            logger.error("Failed to download NYU Stern data")
+            return pd.DataFrame()
             
         try:
-            # Try to get data from FRED API
-            response = requests.get(base_url, params=params)
-            response.raise_for_status()
-            data = response.json()
+            # Read the Excel file
+            df = pd.read_excel(BytesIO(excel_content), sheet_name=self.sheet_name)
             
-            if 'observations' not in data:
-                logger.error(f"No observations in FRED API response for {self.fred_series_id}")
-                return None
+            # Clean column names
+            df.columns = [str(col).strip() for col in df.columns]
+            
+            # Extract relevant columns
+            relevant_cols = ['Start of month', 'T.Bond Rate', 'ERP (T12m)', 'Expected Return']
+            
+            # Check if all relevant columns exist
+            missing_cols = [col for col in relevant_cols if col not in df.columns]
+            if missing_cols:
+                # Attempt to find similar column names
+                for missing_col in missing_cols[:]:
+                    for col in df.columns:
+                        if missing_col.lower() in col.lower():
+                            df.rename(columns={col: missing_col}, inplace=True)
+                            missing_cols.remove(missing_col)
+                            break
+            
+            # If we still have missing columns, log error and return empty dataframe
+            if missing_cols:
+                logger.error(f"Missing columns in NYU Stern data: {missing_cols}")
+                logger.error(f"Available columns: {df.columns.tolist()}")
+                return pd.DataFrame()
+            
+            # Keep only the relevant columns
+            df = df[relevant_cols]
+            
+            # Rename columns to match database schema
+            df.rename(columns={
+                'Start of month': 'date',
+                'T.Bond Rate': 'tbond_rate',
+                'ERP (T12m)': 'erp_t12m',
+                'Expected Return': 'expected_return'
+            }, inplace=True)
+            
+            # Ensure date column is properly formatted as datetime
+            df['date'] = pd.to_datetime(df['date'])
+            
+            # Process each column with percentage values individually by row
+            for col in ['tbond_rate', 'erp_t12m', 'expected_return']:
+                if col not in df.columns:
+                    continue
                 
-            # Save the raw JSON to blob storage for future reference
-            self.azure.upload_blob(container_name, blob_name, json.dumps(data))
+                # Convert each value individually by row
+                for idx, value in df[col].items():
+                    # Convert to string for inspection
+                    value_str = str(value)
+                    
+                    # Check if it has a % symbol
+                    if '%' in value_str:
+                        # Remove % and convert
+                        df.at[idx, col] = float(value_str.replace('%', '')) / 100
+                    else:
+                        # Try to convert to float
+                        try:
+                            float_val = float(value)
+                            # If it's a percentage value (e.g., 3.96 instead of 0.0396)
+                            # Values in the data are typically in the 3-5% range as decimals
+                            if float_val > 0.2:  # Threshold for identifying percentages
+                                df.at[idx, col] = float_val / 100
+                            else:
+                                # Already in decimal form
+                                df.at[idx, col] = float_val
+                        except (ValueError, TypeError):
+                            # Leave as is if conversion fails
+                            pass
             
-            # Convert to DataFrame
-            df = pd.DataFrame(data['observations'])
-            
-            # Rename columns and convert types
-            df = df.rename(columns={'date': 'Date', 'value': self.value_column})
-            df['Date'] = pd.to_datetime(df['Date'])
-            
-            # Handle cases where value is "." (missing data)
-            df[self.value_column] = df[self.value_column].replace('.', None)
-            df[self.value_column] = pd.to_numeric(df[self.value_column], errors='coerce')
-            
-            # Drop rows with missing values
-            df = df.dropna(subset=[self.value_column])
+            # Add debug log for the first few rows after conversion
+            logger.info("Sample of processed data:")
+            logger.info(df.head().to_string())
             
             # Sort by date
-            df = df.sort_values('Date').reset_index(drop=True)
+            df.sort_values('date', inplace=True)
             
-            # Keep only essential columns
-            return df[['Date', self.value_column]]
+            # Drop rows with NaN values
+            df.dropna(inplace=True)
+            
+            return df
             
         except Exception as e:
-            logger.exception(f"Error fetching data from FRED API for {self.fred_series_id}: {e}")
-            return None
-    
-    def process_data(self, df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """
-        Process raw data.
-        Note: For FRED data, we already get processed data from the API.
-        
-        Args:
-            df: Optional DataFrame (not used for FRED as we fetch directly)
-            
-        Returns:
-            Processed DataFrame
-        """
-        # If no DataFrame is provided, fetch from FRED
-        if df is None:
-            df = self.fetch_fred_data()
-            
-        if df is None or df.empty:
-            return pd.DataFrame(columns=['Date', self.value_column])
-        
-        # Apply date adjustment for quarterly data
-        if self.frequency == 'q':
-            df['Date'] = df['Date'].apply(self._adjust_quarterly_date)
-            
-        # Apply value type conversion if needed
-        if self.value_type == 'int':
-            df[self.value_column] = df[self.value_column].round().astype(int)
-            
-        return df
-    
-    def _adjust_quarterly_date(self, date):
-        """
-        Adjust quarterly dates to first-of-month after quarter ends.
-        
-        FRED returns the first day of the quarter (e.g., 2025-01-01 for Q1 2025),
-        but we want the first day of the month after the quarter ends:
-        - Q1 (Jan-Mar) -> Apr 1
-        - Q2 (Apr-Jun) -> Jul 1
-        - Q3 (Jul-Sep) -> Oct 1
-        - Q4 (Oct-Dec) -> Jan 1 (of next year)
-        
-        This aligns with the first-of-month pattern used in monthly data.
-        
-        Args:
-            date: pandas Timestamp with the first day of a quarter
-                
-        Returns:
-            pandas Timestamp with the first day of month after quarter end
-        """
-        # Get quarter number (1-4)
-        quarter = (date.month - 1) // 3 + 1
-        
-        # Map quarters to first day of next month
-        if quarter == 1:  # Q1 (Jan-Mar)
-            return pd.Timestamp(date.year, 4, 1)  # Apr 1
-        elif quarter == 2:  # Q2 (Apr-Jun)
-            return pd.Timestamp(date.year, 7, 1)  # Jul 1
-        elif quarter == 3:  # Q3 (Jul-Sep)
-            return pd.Timestamp(date.year, 10, 1)  # Oct 1
-        else:  # Q4 (Oct-Dec)
-            return pd.Timestamp(date.year + 1, 1, 1)  # Jan 1 of next year
+            logger.exception(f"Error processing NYU Stern data: {e}")
+            return pd.DataFrame()
     
     def insert_data(self, data: pd.DataFrame) -> None:
         """Insert processed data into database"""
         if data.empty:
-            logger.warning(f"No data to insert for {self.fred_series_id}")
+            logger.warning("No data to insert for NYU Stern ERP")
             return
-            
-        # Convert column name to lowercase with underscore format
-        column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
-        
-        # Rename columns to match database schema
-        data = data.rename(columns={'Date': 'date', self.value_column: column_name})
         
         # Format date as string for database
         data['date'] = data['date'].dt.strftime('%Y-%m-%d')
@@ -207,7 +182,7 @@ class FREDScraper:
             dataset_name=self.table_name,
             data_df=data,
             date_field='date',
-            value_fields=[column_name]
+            value_fields=['tbond_rate', 'erp_t12m', 'expected_return']
         )
     
     def update_last_run(self, dataset_name: str) -> None:

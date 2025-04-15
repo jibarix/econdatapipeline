@@ -7,7 +7,7 @@ import argparse
 import logging
 from typing import Dict, Optional, List, Tuple
 
-from db_connector import DataConnector
+from old_files.db_connector import DataConnector
 from db_config import DATASETS  # Direct import for clarity
 
 # Configure logging
