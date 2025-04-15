@@ -1,7 +1,5 @@
 # Azure Automation Implementation Checklist
 
-Use this checklist to track your progress implementing the Economic Data Pipeline on Azure Automation.
-
 ## Phase 1: Environment Setup
 
 - [x] Create Resource Group: `EconDataPipelineRG`
@@ -13,16 +11,17 @@ Use this checklist to track your progress implementing the Economic Data Pipelin
 - [x] Update dependencies in `requirements.txt`
 - [x] Add FRED API Key to environment variables
 
-## Phase 2: Code Adaptations
+## Phase 2: Code Development
 
-- [x] Create Azure connector (`azure_connector.py`)
-- [x] Modify data tracking with `azure_data_tracker.py`
-- [x] Update scraper classes to work with Azure Storage
-- [x] Implement Azure Storage operations
-- [x] Create main Azure pipeline script (`main_azure.py`)
-- [x] Create test scripts
+- [x] Create Azure connector functionality
+- [x] Implement data tracking with revision history
+- [x] Build scrapers for EDB data
+- [x] Build scrapers for FRED API data
+- [x] Build scraper for NYU Stern data
+- [x] Create test scripts for local validation
+- [x] Create consolidated runbook (`economic_data_pipeline_runbook.py`)
 
-## Phase 3: Testing
+## Phase 3: Local Testing
 
 - [x] Test Azure connector functionality
 - [x] Verify container operations
@@ -32,19 +31,28 @@ Use this checklist to track your progress implementing the Economic Data Pipelin
 
 ## Phase 4: Azure Automation Setup
 
-- [x] Create initial data collection runbook (`data_collection_runbook.py`)
-- [ ] Create consolidated Python module (`economic_data_pipeline.py`)
-- [ ] Upload custom Python module to Azure Automation account
-- [ ] Configure Python package dependencies in Azure Automation
+- [x] Create consolidated runbook in Azure Automation
+- [ ] Install required Python packages in Azure Automation:
+  - [ ] Import `import_py3package_from_pypi.py` helper runbook
+  - [ ] Install pandas
+  - [ ] Install numpy
+  - [ ] Install requests
+  - [ ] Install azure-identity
+  - [ ] Install azure-storage-blob
+  - [ ] Install azure-data-tables
+  - [ ] Install azure-keyvault-secrets
+  - [ ] Install python-dateutil
+  - [ ] Install openpyxl
 - [ ] Test the runbook execution in Azure Automation environment
 
 ### Managed Identity Permissions
 
 - [ ] Enable System-assigned Managed Identity for the Automation Account
-- [ ] Create PowerShell script for permission setup
+- [ ] Run the PowerShell script for permission setup
 - [ ] Assign Storage Blob Data Contributor role
 - [ ] Assign Storage Table Data Contributor role
 - [ ] Assign Key Vault Secrets User role
+- [ ] Store FRED API key in Key Vault as 'FRED-API-KEY'
 - [ ] Verify all permissions are properly set
 
 ### Scheduling
