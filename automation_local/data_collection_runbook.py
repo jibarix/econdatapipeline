@@ -28,7 +28,7 @@ def main():
     try:
         # Import the consolidated module
         # This assumes economic_data_pipeline.py has been uploaded to Azure Automation
-        import economic_data_pipeline
+        import root_not_in_use.economic_data_pipeline as economic_data_pipeline
         
         # Get variables from Azure Automation
         storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT", "econdatastorage")

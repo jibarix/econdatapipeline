@@ -83,3 +83,6 @@ tmp/
 
 # Misc
 old_files/
+# core_local/
+# automation_local/
+# root_local/
