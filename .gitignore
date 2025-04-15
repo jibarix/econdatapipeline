@@ -82,6 +82,4 @@ temp/
 tmp/
 
 # Misc
-view_data.py
-data_tracker.py
-models.py
+old_files/

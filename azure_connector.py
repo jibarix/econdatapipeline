@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any, Union
 from io import BytesIO
 
 # Azure SDK imports
-from azure.identity import DefaultAzureCredential, ManagedIdentity
+from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
 from azure.keyvault.secrets import SecretClient
 from azure.data.tables import TableServiceClient, TableClient, UpdateMode, EntityProperty
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
@@ -444,7 +444,7 @@ class AzureConnector:
             # NYU Stern data table
             "equity_risk_premium",
             # Metadata and revision tracking tables
-            "data_revisions", "scraper_metadata"
+            "datarevisions", "scrapermetadata"
         ]
         
         success = True
@@ -572,7 +572,7 @@ class AzureConnector:
                 "last_run": timestamp
             }
             
-            return self.upsert_entity("scraper_metadata", entity)
+            return self.upsert_entity("scrapermetadata", entity)
         except Exception as e:
             logger.error(f"Failed to update last run for dataset '{dataset_name}': {e}")
             return False
@@ -588,7 +588,7 @@ class AzureConnector:
             Timestamp of last run or None if not found
         """
         try:
-            entity = self.get_entity("scraper_metadata", "dataset", dataset_name)
+            entity = self.get_entity("scrapermetadata", "dataset", dataset_name)
             
             if entity and "last_run" in entity:
                 from dateutil import parser
@@ -650,7 +650,7 @@ class AzureConnector:
                 "revision_date": revision_date
             }
             
-            return self.upsert_entity("data_revisions", entity)
+            return self.upsert_entity("datarevisions", entity)
         except Exception as e:
             logger.error(f"Failed to track revision: {e}")
             return False
@@ -682,7 +682,7 @@ class AzureConnector:
             query_filter = " and ".join(filter_parts)
             
             # Query revisions
-            df = self.table_to_dataframe("data_revisions", query_filter)
+            df = self.table_to_dataframe("datarevisions", query_filter)
             
             if df.empty:
                 return pd.DataFrame(columns=[

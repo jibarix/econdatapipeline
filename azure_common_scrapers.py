@@ -1,19 +1,24 @@
 """
 Common scraper implementations for Economic Development Bank data.
 Provides base classes for monthly and quarterly data patterns.
+Azure-adapted version.
 """
 from typing import Optional, Dict, Any, List
 import pandas as pd
 from datetime import datetime
 import requests
 from io import BytesIO
-from supabase import Client
-import data_tracker
+import logging
+
+# Import Azure connector instead of Supabase
+from azure_connector import AzureConnector
+
+logger = logging.getLogger(__name__)
 
 class BaseEDBScraper:
     """Base class for Economic Development Bank scrapers"""
-    def __init__(self, supabase: Client):
-        self.supabase = supabase
+    def __init__(self, azure_connector: AzureConnector):
+        self.azure = azure_connector
 
     def create_table(self) -> None:
         """Create database table if it doesn't exist"""
@@ -30,11 +35,32 @@ class BaseEDBScraper:
     def download_excel(self, url: str, file_name: str) -> Optional[bytes]:
         """Download Excel file from specified URL"""
         try:
+            # First check if the file is already in blob storage
+            blob_name = file_name
+            container_name = "raw-files"
+            
+            # Ensure container exists
+            self.azure.create_container(container_name)
+            
+            # Try to download from blob storage first
+            excel_content = self.azure.download_blob(container_name, blob_name)
+            
+            if excel_content:
+                logger.info(f"Retrieved {file_name} from blob storage")
+                return excel_content
+            
+            # If not in blob storage, download from URL
             response = requests.get(url + file_name)
             response.raise_for_status()
-            return response.content
+            excel_content = response.content
+            
+            # Save to blob storage for future use
+            self.azure.upload_blob(container_name, blob_name, excel_content)
+            logger.info(f"Downloaded {file_name} from URL and saved to blob storage")
+            
+            return excel_content
         except Exception as e:
-            print(f"Download error: {e}")
+            logger.error(f"Download error: {e}")
             return None
 
     def extract_data(self, excel_content: bytes, sheet_name: str, 
@@ -49,38 +75,20 @@ class BaseEDBScraper:
             end_col = ord(end_cell[0].upper()) - ord('A')
             return df.iloc[start_row:end_row + 1, start_col:end_col + 1]
         except Exception as e:
-            print(f"Extraction error: {e}")
+            logger.error(f"Extraction error: {e}")
             return None
 
     def update_last_run(self, dataset_name: str) -> None:
         """Update timestamp of last scraper run"""
-        timestamp = datetime.utcnow().isoformat()
-        self.supabase.table('scraper_metadata').upsert({
-            'dataset': dataset_name,
-            'last_run': timestamp
-        }).execute()
+        self.azure.update_last_run(dataset_name)
 
     def get_last_run(self, dataset_name: str) -> Optional[datetime]:
         """Get timestamp of last scraper run"""
-        result = self.supabase.table('scraper_metadata')\
-            .select('last_run')\
-            .eq('dataset', dataset_name)\
-            .execute()
-        if result.data:
-            # Use dateutil parser which is more flexible with ISO formats
-            from dateutil import parser
-            last_run = parser.parse(result.data[0]['last_run'])
-            return last_run.replace(tzinfo=None)  # Strip timezone for comparison
-        return None
+        return self.azure.get_last_run(dataset_name)
 
     def should_update(self, dataset_name: str, update_frequency_hours: int = 24) -> bool:
         """Check if dataset should be updated based on last update time"""
-        last_run = self.get_last_run(dataset_name)
-        if not last_run:
-            return True
-        now = datetime.utcnow()
-        hours_since_update = (now - last_run).total_seconds() / 3600
-        return hours_since_update >= update_frequency_hours
+        return self.azure.should_update(dataset_name, update_frequency_hours)
 
 
 class MonthlyDataScraper(BaseEDBScraper):
@@ -94,18 +102,17 @@ class MonthlyDataScraper(BaseEDBScraper):
     - Data follows the fiscal year pattern (July-June)
     """
     
-    def __init__(self, supabase: Client, config: Dict[str, Any]):
-        super().__init__(supabase)
+    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
+        super().__init__(azure_connector)
         self.table_name = config['table_name']
         self.value_column = config['value_column']
         self.value_type = config.get('value_type', 'float')
-        self.create_table_sql = config['create_table_sql']
+        # No need for create_table_sql in Azure implementation
         
     def create_table(self) -> None:
         """Create the database table if it doesn't exist"""
-        for statement in self.create_table_sql.split(';'):
-            if statement.strip():
-                self.supabase.postgrest.rpc('exec_sql', {'query': statement}).execute()
+        # Use Azure connector to create table
+        self.azure.create_table(self.table_name)
 
     def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process raw data into standardized format"""
@@ -157,6 +164,10 @@ class MonthlyDataScraper(BaseEDBScraper):
     
     def insert_data(self, data: pd.DataFrame) -> None:
         """Insert processed data into database"""
+        if data.empty:
+            logger.warning(f"No data to insert for {self.table_name}")
+            return
+            
         # Convert column name to lowercase with underscore format
         column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
         
@@ -166,9 +177,11 @@ class MonthlyDataScraper(BaseEDBScraper):
         # Format date as string for database
         data['date'] = data['date'].dt.strftime('%Y-%m-%d')
         
-        # Use the data tracker's smart update
-        data_tracker.smart_update(
-            supabase=self.supabase,
+        # Use Azure data tracker's smart update instead of Supabase
+        from azure_data_tracker import smart_update
+        
+        smart_update(
+            azure_connector=self.azure,
             dataset_name=self.table_name,
             data_df=data,
             date_field='date',
@@ -187,18 +200,17 @@ class QuarterlyDataScraper(BaseEDBScraper):
     - Data follows the fiscal year pattern (July-June)
     """
     
-    def __init__(self, supabase: Client, config: Dict[str, Any]):
-        super().__init__(supabase)
+    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
+        super().__init__(azure_connector)
         self.table_name = config['table_name']
         self.value_column = config['value_column']
         self.value_type = config.get('value_type', 'float')
-        self.create_table_sql = config['create_table_sql']
+        # No need for create_table_sql in Azure implementation
         
     def create_table(self) -> None:
         """Create the database table if it doesn't exist"""
-        for statement in self.create_table_sql.split(';'):
-            if statement.strip():
-                self.supabase.postgrest.rpc('exec_sql', {'query': statement}).execute()
+        # Use Azure connector to create table
+        self.azure.create_table(self.table_name)
 
     def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """Process raw data into standardized format"""
@@ -254,6 +266,10 @@ class QuarterlyDataScraper(BaseEDBScraper):
         
     def insert_data(self, data: pd.DataFrame) -> None:
         """Insert processed data into database"""
+        if data.empty:
+            logger.warning(f"No data to insert for {self.table_name}")
+            return
+            
         # Convert column name to lowercase with underscore format
         # Fix: ensure proper camelCase to snake_case conversion
         column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
@@ -268,9 +284,11 @@ class QuarterlyDataScraper(BaseEDBScraper):
         # Format date as string for database
         data['date'] = data['date'].dt.strftime('%Y-%m-%d')
         
-        # Use the data tracker's smart update
-        data_tracker.smart_update(
-            supabase=self.supabase,
+        # Use Azure data tracker's smart update instead of Supabase
+        from azure_data_tracker import smart_update
+        
+        smart_update(
+            azure_connector=self.azure,
             dataset_name=self.table_name,
             data_df=data,
             date_field='date',

@@ -22,7 +22,7 @@ def initialize_revision_tracking(azure_connector: AzureConnector) -> bool:
     Returns:
         bool: True if successful, False otherwise
     """
-    return azure_connector.create_table("data_revisions")
+    return azure_connector.create_table("datarevisions")
 
 def smart_update(azure_connector: AzureConnector, dataset_name: str, 
                 data_df: pd.DataFrame, date_field: str, value_fields: List[str]) -> Dict[str, int]:
@@ -154,7 +154,7 @@ def smart_update(azure_connector: AzureConnector, dataset_name: str,
     # Record revisions
     if revisions:
         logger.info(f"Recording {len(revisions)} data revisions for {dataset_name}")
-        if azure_connector.batch_upsert("data_revisions", revisions):
+        if azure_connector.batch_upsert("datarevisions", revisions):
             results["revisions"] = len(revisions)
         else:
             logger.error(f"Failed to record data revisions for {dataset_name}")
@@ -192,7 +192,7 @@ def get_revision_history(azure_connector: AzureConnector, dataset: str,
     query_filter = " and ".join(filter_parts)
     
     # Query revisions
-    result = azure_connector.query_entities("data_revisions", query_filter)
+    result = azure_connector.query_entities("datarevisions", query_filter)
     
     if not result:
         # Return empty dataframe with expected columns

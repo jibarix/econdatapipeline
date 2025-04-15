@@ -1,5 +1,6 @@
 """
 Module for fetching economic data from the FRED API with proper quarterly date handling.
+Azure-adapted version.
 """
 import os
 import logging
@@ -7,8 +8,10 @@ import pandas as pd
 import requests
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from supabase import Client
-import data_tracker
+
+# Import Azure connector instead of Supabase
+from azure_connector import AzureConnector
+from azure_data_tracker import smart_update
 
 logger = logging.getLogger('fred_scraper')
 
@@ -17,35 +20,43 @@ class FREDScraper:
     Scraper for FRED (Federal Reserve Economic Data) API.
     """
     
-    def __init__(self, supabase: Client, config: Dict[str, Any]):
+    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
         """
         Initialize the FRED scraper.
         
         Args:
-            supabase: Supabase client
+            azure_connector: Azure connector instance
             config: Scraper configuration
         """
-        self.supabase = supabase
+        self.azure = azure_connector
         self.table_name = config['table_name']
         self.value_column = config['value_column']
         self.value_type = config.get('value_type', 'float')
-        self.create_table_sql = config['create_table_sql']
         self.fred_series_id = config['fred_series_id']
         self.frequency = config.get('frequency', 'm')  # Default to monthly
-        self.api_key = os.environ.get("FRED_API_KEY")
+        
+        # Try to get API key from Key Vault first, then environment variable
+        try:
+            if azure_connector.secret_client:
+                self.api_key = azure_connector.get_secret("FRED-API-KEY")
+            else:
+                # Fallback to environment variable
+                self.api_key = os.environ.get("FRED_API_KEY")
+        except Exception as e:
+            logger.warning(f"Could not retrieve FRED API key from Key Vault: {e}")
+            # Fallback to environment variable
+            self.api_key = os.environ.get("FRED_API_KEY")
+        
+        if not self.api_key:
+            raise ValueError("FRED API key not found in Key Vault or environment variables")
         
         # Import the start date from fred_config
         from fred_config import FRED_START_DATE
         self.start_date = FRED_START_DATE
-        
-        if not self.api_key:
-            raise ValueError("FRED_API_KEY environment variable not set")
     
     def create_table(self) -> None:
         """Create the database table if it doesn't exist"""
-        for statement in self.create_table_sql.split(';'):
-            if statement.strip():
-                self.supabase.postgrest.rpc('exec_sql', {'query': statement}).execute()
+        self.azure.create_table(self.table_name)
     
     def fetch_fred_data(self, start_date: Optional[str] = None) -> Optional[pd.DataFrame]:
         """
@@ -57,6 +68,13 @@ class FREDScraper:
         Returns:
             DataFrame with date and value columns or None if failed
         """
+        # First check if we have cached data in blob storage
+        container_name = "raw-files"
+        blob_name = f"fred_{self.fred_series_id}.json"
+        
+        # Ensure container exists
+        self.azure.create_container(container_name)
+        
         base_url = "https://api.stlouisfed.org/fred/series/observations"
         
         params = {
@@ -72,6 +90,7 @@ class FREDScraper:
         params["observation_start"] = start_date if start_date else self.start_date
             
         try:
+            # Try to get data from FRED API
             response = requests.get(base_url, params=params)
             response.raise_for_status()
             data = response.json()
@@ -80,6 +99,9 @@ class FREDScraper:
                 logger.error(f"No observations in FRED API response for {self.fred_series_id}")
                 return None
                 
+            # Save the raw JSON to blob storage for future reference
+            self.azure.upload_blob(container_name, blob_name, json.dumps(data))
+            
             # Convert to DataFrame
             df = pd.DataFrame(data['observations'])
             
@@ -179,9 +201,9 @@ class FREDScraper:
         # Format date as string for database
         data['date'] = data['date'].dt.strftime('%Y-%m-%d')
         
-        # Use the data tracker's smart update
-        data_tracker.smart_update(
-            supabase=self.supabase,
+        # Use Azure data tracker's smart update instead of Supabase
+        smart_update(
+            azure_connector=self.azure,
             dataset_name=self.table_name,
             data_df=data,
             date_field='date',
@@ -190,30 +212,12 @@ class FREDScraper:
     
     def update_last_run(self, dataset_name: str) -> None:
         """Update timestamp of last scraper run"""
-        timestamp = datetime.utcnow().isoformat()
-        self.supabase.table('scraper_metadata').upsert({
-            'dataset': dataset_name,
-            'last_run': timestamp
-        }).execute()
+        self.azure.update_last_run(dataset_name)
     
     def get_last_run(self, dataset_name: str) -> Optional[datetime]:
         """Get timestamp of last scraper run"""
-        result = self.supabase.table('scraper_metadata')\
-            .select('last_run')\
-            .eq('dataset', dataset_name)\
-            .execute()
-        if result.data:
-            # Use dateutil parser which is more flexible with ISO formats
-            from dateutil import parser
-            last_run = parser.parse(result.data[0]['last_run'])
-            return last_run.replace(tzinfo=None)  # Strip timezone for comparison
-        return None
+        return self.azure.get_last_run(dataset_name)
     
     def should_update(self, dataset_name: str, update_frequency_hours: int = 24) -> bool:
         """Check if dataset should be updated based on last update time"""
-        last_run = self.get_last_run(dataset_name)
-        if not last_run:
-            return True
-        now = datetime.utcnow()
-        hours_since_update = (now - last_run).total_seconds() / 3600
-        return hours_since_update >= update_frequency_hours
+        return self.azure.should_update(dataset_name, update_frequency_hours)
