@@ -7,17 +7,13 @@ import os
 import logging
 import json
 import pandas as pd
+import numpy as np
 import requests
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Tuple
 from io import BytesIO
-
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger('economic_data_pipeline')
+import traceback
+from dateutil import parser
 
 # Azure SDK imports
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential
@@ -26,9 +22,1260 @@ from azure.data.tables import TableServiceClient, TableClient, UpdateMode, Entit
 from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger('economic_data_pipeline')
+
 #########################
-# Azure Connector Class #
+# Configuration Section #
 #########################
+
+# Base URL for all EDB data sources
+BASE_URL = "https://www.bde.pr.gov/BDE/PREDDOCS/"
+
+# Common settings for FRED API
+FRED_START_DATE = "2014-01-01"  # Start date for all FRED data
+
+# EDB scraper configurations
+EDB_SCRAPER_CONFIGS = {
+    'auto_sales': {
+        'file_name': 'I_AUTO.XLS',
+        'sheet_name': 'AS01',
+        'data_location': 'A6:K18',
+        'table_name': 'autosales',
+        'value_column': 'Sales',
+        'value_type': 'int',
+        'type': 'monthly'
+    },
+    'bankruptcies': {
+        'file_name': 'I_BANKRUPT.XLS',
+        'sheet_name': 'BAN01',
+        'data_location': 'A6:K18',
+        'table_name': 'bankruptcies',
+        'value_column': 'Filings',
+        'value_type': 'int',
+        'type': 'monthly'
+    },
+    'cement_production': {
+        'file_name': 'I_CEMENT.XLS',
+        'sheet_name': 'CD01',
+        'data_location': 'A6:K18',
+        'table_name': 'cementproduction',
+        'value_column': 'Production',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'electricity_consumption': {
+        'file_name': 'I_ENERGY.XLS',
+        'sheet_name': 'EEC01',
+        'data_location': 'A6:K18',
+        'table_name': 'electricityconsumption',
+        'value_column': 'Consumption',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'gas_price': {
+        'file_name': 'I_GAS.XLS',
+        'sheet_name': 'GAS01',
+        'data_location': 'A6:K18',
+        'table_name': 'gasprice',
+        'value_column': 'Price',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'gas_consumption': {
+        'file_name': 'I_GAS.XLS',
+        'sheet_name': 'GAS02',
+        'data_location': 'A6:K18',
+        'table_name': 'gasconsumption',
+        'value_column': 'Consumption',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'labor_participation': {
+        'file_name': 'I_LABOR.XLS',
+        'sheet_name': 'LF03',
+        'data_location': 'A6:K18',
+        'table_name': 'laborparticipation',
+        'value_column': 'Rate',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'unemployment_rate': {
+        'file_name': 'I_LABOR.XLS',
+        'sheet_name': 'LF08',
+        'data_location': 'A6:K18',
+        'table_name': 'unemploymentrate',
+        'value_column': 'Rate',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'employment_rate': {
+        'file_name': 'I_LABOR.XLS',
+        'sheet_name': 'LF09',
+        'data_location': 'A6:K18',
+        'table_name': 'employmentrate',
+        'value_column': 'Rate',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'unemployment_claims': {
+        'file_name': 'I_LABOR.XLS',
+        'sheet_name': 'LF10',
+        'data_location': 'A6:K18',
+        'table_name': 'unemploymentclaims',
+        'value_column': 'Claims',
+        'value_type': 'int',
+        'type': 'monthly'
+    },
+    'trade_employment': {
+        'file_name': 'I_PAYROLL.XLS',
+        'sheet_name': 'PE05',
+        'data_location': 'A6:K18',
+        'table_name': 'tradeemployment',
+        'value_column': 'Employment',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'consumer_price_index': {
+        'file_name': 'I_PRICE.XLS',
+        'sheet_name': 'CPI01',
+        'data_location': 'A6:K18',
+        'table_name': 'consumerpriceindex',
+        'value_column': 'Index',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'transportation_price_index': {
+        'file_name': 'I_PRICE.XLS',
+        'sheet_name': 'CPI05',
+        'data_location': 'A6:K18',
+        'table_name': 'transportationpriceindex',
+        'value_column': 'Index',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'retail_sales': {
+        'file_name': 'I_RETAIL.XLS',
+        'sheet_name': 'RS01',
+        'data_location': 'A6:K18',
+        'table_name': 'retailsales',
+        'value_column': 'Sales',
+        'value_type': 'float',
+        'type': 'monthly'
+    },
+    'imports': {
+        'file_name': 'I_TRADE.XLS',
+        'sheet_name': 'ET05',
+        'data_location': 'A6:K18',
+        'table_name': 'imports',
+        'value_column': 'Value',
+        'value_type': 'float',
+        'type': 'monthly'
+    }
+}
+
+# FRED API scraper configurations
+FRED_SCRAPER_CONFIGS = {
+    'federal_funds_rate': {
+        'table_name': 'federalfundsrate',
+        'value_column': 'Rate',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'DFF',  # Federal Funds Effective Rate
+        'frequency': 'm'  # Monthly average
+    },
+    'auto_manufacturing_orders': {
+        'table_name': 'automanufacturingorders',
+        'value_column': 'Orders',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'AMVPNO',  # Manufacturers' New Orders: Motor Vehicles and Parts
+        'frequency': 'm'  # Monthly
+    },
+    'used_car_retail_sales': {
+        'table_name': 'usedcarretailsales',
+        'value_column': 'Sales',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'MRTSSM44112USN',  # Retail Sales: Used Car Dealers
+        'frequency': 'm'  # Monthly
+    },
+    'domestic_auto_inventories': {
+        'table_name': 'domesticautoinventories',
+        'value_column': 'Inventories',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'AUINSA',  # Domestic Auto Inventories
+        'frequency': 'm'  # Monthly
+    },
+    'domestic_auto_production': {
+        'table_name': 'domesticautoproduction',
+        'value_column': 'Production',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'DAUPSA',  # Domestic Auto Production
+        'frequency': 'm'  # Monthly
+    },
+    'liquidity_credit_facilities': {
+        'table_name': 'liquiditycreditfacilities',
+        'value_column': 'Facilities',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'WLCFLL',  # Assets: Liquidity and Credit Facilities: Loans
+        'frequency': 'm'  # Monthly
+    },
+    'semiconductor_manufacturing_units': {
+        'table_name': 'semiconductormanufacturingunits',
+        'value_column': 'Units',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'IPG3344S',  # Industrial Production: Semiconductor Components
+        'frequency': 'm'  # Monthly
+    },
+    'aluminum_new_orders': {
+        'table_name': 'aluminumneworders',
+        'value_column': 'Orders',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'AANMNO',  # Manufacturers' New Orders: Aluminum Products
+        'frequency': 'm'  # Monthly    
+    },
+    'real_gdp': {
+        'table_name': 'realgdp',
+        'value_column': 'Value',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'GDPC1',  # Real Gross Domestic Product
+        'frequency': 'q'  # Quarterly
+    },
+    'gdp_now_forecast': {
+        'table_name': 'gdpnowforecast',
+        'value_column': 'Forecast',
+        'value_type': 'float',
+        'type': 'fred',
+        'fred_series_id': 'GDPNOW',  # GDPNow Forecast
+        'frequency': 'q'  # Quarterly
+    }
+}
+
+# NYU Stern configuration
+NYU_STERN_CONFIG = {
+    'table_name': 'equityriskpremium',
+    'url': 'https://pages.stern.nyu.edu/~adamodar/pc/implprem/ERPbymonth.xlsx',
+    'sheet_name': 'Historical ERP',
+    'type': 'nyu_stern'
+}
+
+#############################
+# Scraper Base Classes Section #
+#############################
+
+class BaseEDBScraper:
+    """Base class for Economic Development Bank scrapers"""
+    def __init__(self, azure_connector: AzureConnector):
+        self.azure = azure_connector
+
+    def create_table(self) -> None:
+        """Create database table if it doesn't exist"""
+        pass
+
+    def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Process raw data into a standardized format"""
+        pass
+
+    def insert_data(self, data: pd.DataFrame) -> None:
+        """Insert processed data into database"""
+        pass
+
+    def download_excel(self, url: str, file_name: str) -> Optional[bytes]:
+        """Download Excel file from specified URL"""
+        try:
+            # First check if the file is already in blob storage
+            blob_name = file_name
+            container_name = "raw-files"
+            
+            # Ensure container exists
+            self.azure.create_container(container_name)
+            
+            # Try to download from blob storage first
+            excel_content = self.azure.download_blob(container_name, blob_name)
+            
+            if excel_content:
+                logger.info(f"Retrieved {file_name} from blob storage")
+                return excel_content
+            
+            # If not in blob storage, download from URL
+            response = requests.get(url + file_name)
+            response.raise_for_status()
+            excel_content = response.content
+            
+            # Save to blob storage for future use
+            self.azure.upload_blob(container_name, blob_name, excel_content)
+            logger.info(f"Downloaded {file_name} from URL and saved to blob storage")
+            
+            return excel_content
+        except Exception as e:
+            logger.error(f"Download error: {e}")
+            return None
+
+    def extract_data(self, excel_content: bytes, sheet_name: str, 
+                     data_location: str) -> Optional[pd.DataFrame]:
+        """Extract data from specific location in Excel file"""
+        try:
+            df = pd.read_excel(BytesIO(excel_content), sheet_name=sheet_name, header=None)
+            start_cell, end_cell = data_location.split(":")
+            start_row = int(start_cell[1:]) - 1
+            start_col = ord(start_cell[0].upper()) - ord('A')
+            end_row = int(end_cell[1:]) - 1
+            end_col = ord(end_cell[0].upper()) - ord('A')
+            return df.iloc[start_row:end_row + 1, start_col:end_col + 1]
+        except Exception as e:
+            logger.error(f"Extraction error: {e}")
+            return None
+
+    def update_last_run(self, dataset_name: str) -> None:
+        """Update timestamp of last scraper run"""
+        self.azure.update_last_run(dataset_name)
+
+    def get_last_run(self, dataset_name: str) -> Optional[datetime]:
+        """Get timestamp of last scraper run"""
+        return self.azure.get_last_run(dataset_name)
+
+    #################################
+# Main Data Collection Function #
+#################################
+
+def create_scraper(azure_connector: AzureConnector, config: Dict[str, Any]):
+    """
+    Create the appropriate scraper instance based on the configuration.
+    
+    Args:
+        azure_connector: AzureConnector instance
+        config: Configuration dictionary
+        
+    Returns:
+        Scraper instance based on the configuration type
+    """
+    if config['type'] == 'monthly':
+        return MonthlyDataScraper(azure_connector, config)
+    elif config['type'] == 'quarterly':
+        return QuarterlyDataScraper(azure_connector, config)
+    elif config['type'] == 'fred':
+        return FREDScraper(azure_connector, config)
+    elif config['type'] == 'nyu_stern':
+        return NYUSternScraper(azure_connector, config)
+    else:
+        raise ValueError(f"Unknown scraper type: {config['type']}")
+
+def run_scraper(scraper, name: str, config: Dict[str, Any]) -> str:
+    """
+    Run a scraper and handle any errors.
+    
+    Args:
+        scraper: The scraper instance
+        name: Name of the dataset
+        config: Configuration dictionary
+        
+    Returns:
+        str: Status of the scraper run - 'updated', 'no_update_needed', or 'failed'
+    """
+    try:
+        # Check if tables need to be created
+        scraper.create_table()
+        
+        # Handle FRED scrapers differently since they fetch data directly
+        if config['type'] == 'fred':
+            # Fetch and process data directly from FRED API
+            processed_df = scraper.process_data()
+            if processed_df.empty:
+                logger.warning(f"No data found for {name}")
+                return 'failed'
+                
+            logger.info(f"\nLatest available data for {name}:")
+            logger.info(processed_df.head())
+        # Handle NYU Stern scraper
+        elif config['type'] == 'nyu_stern':
+            # Process data directly
+            processed_df = scraper.process_data()
+            if processed_df.empty:
+                logger.warning(f"No data found for {name}")
+                return 'failed'
+                
+            logger.info(f"\nLatest available data for {name}:")
+            logger.info(processed_df.head())
+        else:
+            # Always download and show latest data for EDB scrapers
+            excel_content = scraper.download_excel(BASE_URL, config['file_name'])
+            if not excel_content:
+                logger.error(f"Failed to download file for {name}")
+                return 'failed'
+
+            # Extract data from specific sheet and location
+            df = scraper.extract_data(
+                excel_content, 
+                config['sheet_name'], 
+                config['data_location']
+            )
+            if df is None:
+                logger.error(f"Failed to extract data for {name}")
+                return 'failed'
+
+            # Process the data
+            processed_df = scraper.process_data(df)
+            if processed_df.empty:
+                logger.warning(f"No data found for {name}")
+                return 'failed'
+
+            logger.info(f"\nLatest available data for {name}:")
+            logger.info(processed_df.tail())
+            
+        # Update data if needed
+        if scraper.should_update(name):
+            logger.info(f"\nUpdating {name}...")
+            try:
+                scraper.insert_data(processed_df)
+                scraper.update_last_run(name)
+                logger.info(f"Successfully updated {name}")
+                return 'updated'
+            except Exception as e:
+                logger.exception(f"Error updating {name}: {str(e)}")
+                return 'failed'
+        else:
+            logger.info(f"No update needed for {name} yet")
+            return 'no_update_needed'
+    except Exception as e:
+        logger.exception(f"Error processing {name}: {str(e)}")
+        return 'failed'
+
+def run_edb_scrapers(azure_connector: AzureConnector) -> Tuple[List[str], List[str], List[str]]:
+    """
+    Run Economic Development Bank scrapers.
+    
+    Args:
+        azure_connector: AzureConnector instance
+        
+    Returns:
+        Tuple containing lists of updated, no_update_needed, and failed datasets
+    """
+    updated = []
+    no_update_needed = []
+    failed = []
+    
+    logger.info("Starting EDB data scraper")
+    
+    for name, config in EDB_SCRAPER_CONFIGS.items():
+        logger.info(f"\n{'='*50}\nProcessing {name}...")
+        
+        try:
+            scraper = create_scraper(azure_connector, config)
+            
+            status = run_scraper(scraper, name, config)
+            if status == 'updated':
+                updated.append(name)
+            elif status == 'no_update_needed':
+                no_update_needed.append(name)
+            else:
+                failed.append(name)
+                
+        except Exception as e:
+            logger.exception(f"Error setting up {name}: {str(e)}")
+            failed.append(name)
+    
+    return updated, no_update_needed, failed
+
+def run_fred_scrapers(azure_connector: AzureConnector) -> Tuple[List[str], List[str], List[str]]:
+    """
+    Run FRED API scrapers.
+    
+    Args:
+        azure_connector: AzureConnector instance
+        
+    Returns:
+        Tuple containing lists of updated, no_update_needed, and failed datasets
+    """
+    updated = []
+    no_update_needed = []
+    failed = []
+    
+    logger.info("Starting FRED data scraper")
+    
+    for name, config in FRED_SCRAPER_CONFIGS.items():
+        logger.info(f"\n{'='*50}\nProcessing {name}...")
+        
+        try:
+            scraper = create_scraper(azure_connector, config)
+            
+            status = run_scraper(scraper, name, config)
+            if status == 'updated':
+                updated.append(name)
+            elif status == 'no_update_needed':
+                no_update_needed.append(name)
+            else:
+                failed.append(name)
+                
+        except Exception as e:
+            logger.exception(f"Error setting up {name}: {str(e)}")
+            failed.append(name)
+    
+    return updated, no_update_needed, failed
+
+def run_nyu_stern_scraper(azure_connector: AzureConnector) -> Tuple[List[str], List[str], List[str]]:
+    """
+    Run NYU Stern ERP scraper.
+    
+    Args:
+        azure_connector: AzureConnector instance
+        
+    Returns:
+        Tuple containing lists of updated, no_update_needed, and failed datasets
+    """
+    updated = []
+    no_update_needed = []
+    failed = []
+    
+    logger.info("Starting NYU Stern ERP data scraper")
+    
+    config = NYU_STERN_CONFIG
+    name = 'equity_risk_premium'
+    
+    logger.info(f"\n{'='*50}\nProcessing {name}...")
+    
+    try:
+        scraper = create_scraper(azure_connector, config)
+        
+        status = run_scraper(scraper, name, config)
+        if status == 'updated':
+            updated.append(name)
+        elif status == 'no_update_needed':
+            no_update_needed.append(name)
+        else:
+            failed.append(name)
+            
+    except Exception as e:
+        logger.exception(f"Error processing {name}: {str(e)}")
+        failed.append(name)
+    
+    return updated, no_update_needed, failed
+
+def save_run_summary(azure_connector: AzureConnector, summary: Dict[str, Any]) -> None:
+    """
+    Save the run summary to blob storage.
+    
+    Args:
+        azure_connector: AzureConnector instance
+        summary: Dictionary containing run summary
+    """
+    try:
+        # Convert summary to JSON
+        summary_json = json.dumps(summary, indent=2, default=str)
+        
+        # Create a timestamp for the filename
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        
+        # Upload to blob storage
+        container_name = "logs"
+        blob_name = f"run_summary_{timestamp}.json"
+        
+        # Ensure container exists
+        azure_connector.create_container(container_name)
+        
+        # Upload summary
+        azure_connector.upload_blob(container_name, blob_name, summary_json)
+        logger.info(f"Saved run summary to {container_name}/{blob_name}")
+    except Exception as e:
+        logger.error(f"Error saving run summary: {e}")
+
+def main(use_managed_identity: bool = True, storage_account: Optional[str] = None, 
+         key_vault_url: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Main function to run all scrapers.
+    
+    Args:
+        use_managed_identity: Whether to use managed identity for authentication
+        storage_account: Optional storage account name
+        key_vault_url: Optional Key Vault URL
+    
+    Returns:
+        Dict containing summary of the run
+    """
+    start_time = datetime.utcnow()
+    
+    # Initialize Azure connector
+    azure = AzureConnector(
+        use_managed_identity=use_managed_identity,
+        storage_account=storage_account,
+        key_vault_url=key_vault_url
+    )
+    
+    # Initialize tables and containers
+    logger.info("Initializing Azure Storage tables and containers")
+    azure.initialize_tables()
+    azure.initialize_containers()
+    
+    # Run EDB scrapers
+    edb_updated, edb_no_update, edb_failed = run_edb_scrapers(azure)
+    
+    # Run FRED scrapers
+    fred_updated, fred_no_update, fred_failed = run_fred_scrapers(azure)
+    
+    # Run NYU Stern ERP scraper
+    nyu_updated, nyu_no_update, nyu_failed = run_nyu_stern_scraper(azure)
+    
+    # Combine results
+    all_updated = edb_updated + fred_updated + nyu_updated
+    all_no_update = edb_no_update + fred_no_update + nyu_no_update
+    all_failed = edb_failed + fred_failed + nyu_failed
+    
+    end_time = datetime.utcnow()
+    duration = (end_time - start_time).total_seconds()
+    
+    # Create run summary
+    summary = {
+        "start_time": start_time,
+        "end_time": end_time,
+        "duration_seconds": duration,
+        "total_datasets": len(all_updated) + len(all_no_update) + len(all_failed),
+        "updated": {
+            "count": len(all_updated),
+            "datasets": all_updated
+        },
+        "no_update_needed": {
+            "count": len(all_no_update),
+            "datasets": all_no_update
+        },
+        "failed": {
+            "count": len(all_failed),
+            "datasets": all_failed
+        },
+        "details": {
+            "edb": {
+                "updated": edb_updated,
+                "no_update_needed": edb_no_update,
+                "failed": edb_failed
+            },
+            "fred": {
+                "updated": fred_updated,
+                "no_update_needed": fred_no_update,
+                "failed": fred_failed
+            },
+            "nyu": {
+                "updated": nyu_updated,
+                "no_update_needed": nyu_no_update,
+                "failed": nyu_failed
+            }
+        }
+    }
+    
+    # Log summary
+    logger.info("\n\n" + "="*50)
+    logger.info(f"Scraping complete in {duration:.2f} seconds.")
+    logger.info(f"EDB: Updated: {len(edb_updated)}, No update needed: {len(edb_no_update)}, Failed: {len(edb_failed)}")
+    logger.info(f"FRED: Updated: {len(fred_updated)}, No update needed: {len(fred_no_update)}, Failed: {len(fred_failed)}")
+    logger.info(f"NYU: Updated: {len(nyu_updated)}, No update needed: {len(nyu_no_update)}, Failed: {len(nyu_failed)}")
+    logger.info(f"TOTAL: Updated: {len(all_updated)}, No update needed: {len(all_no_update)}, Failed: {len(all_failed)}")
+    
+    if all_updated:
+        logger.info(f"Updated scrapers: {', '.join(all_updated)}")
+    if all_no_update:
+        logger.info(f"No update needed: {', '.join(all_no_update)}")
+    if all_failed:
+        logger.error(f"Failed scrapers: {', '.join(all_failed)}")
+    
+    # Save summary to blob storage
+    save_run_summary(azure, summary)
+    
+    return summary
+
+# Entry point for direct execution (e.g., when testing locally)
+if __name__ == "__main__":
+    # For local testing, use environment variables instead of managed identity
+    main(use_managed_identity=False)
+
+
+class MonthlyDataScraper(BaseEDBScraper):
+    """
+    Generic scraper for monthly data that follows the common EDB pattern.
+    
+    This handles data where:
+    - Data is organized by months (rows) and fiscal years (columns)
+    - First row contains fiscal year headers
+    - First column contains month names
+    - Data follows the fiscal year pattern (July-June)
+    """
+    
+    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
+        super().__init__(azure_connector)
+        self.table_name = config['table_name']
+        self.value_column = config['value_column']
+        self.value_type = config.get('value_type', 'float')
+        
+    def create_table(self) -> None:
+        """Create the database table if it doesn't exist"""
+        self.azure.create_table(self.table_name)
+
+    def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Process raw data into standardized format"""
+        # Set the fiscal years as column headers
+        df.columns = ['Month'] + [int(year) for year in df.iloc[0, 1:]]
+        df = df.iloc[1:].reset_index(drop=True)
+        
+        # Melt the dataframe to transform from wide to long format
+        df_melted = pd.melt(df, id_vars=['Month'], var_name='Year', value_name=self.value_column)
+        
+        # Create dates from month names and fiscal years
+        df_melted['Date'] = df_melted.apply(self._create_date, axis=1)
+        df_melted = df_melted.dropna(subset=['Date'])
+        df_melted = df_melted.sort_values(by='Date').reset_index(drop=True)
+        
+        # Convert values to the appropriate type
+        if self.value_type == 'int':
+            df_melted[self.value_column] = pd.to_numeric(df_melted[self.value_column], errors='coerce')
+            df_melted = df_melted.dropna(subset=[self.value_column])
+            df_melted[self.value_column] = df_melted[self.value_column].round().astype(int)
+        else:  # float
+            df_melted[self.value_column] = pd.to_numeric(df_melted[self.value_column], errors='coerce')
+            df_melted = df_melted.dropna(subset=[self.value_column])
+        
+        return df_melted[['Date', self.value_column]]
+    
+    def _create_date(self, row: pd.Series) -> Optional[pd.Timestamp]:
+        """
+        Create proper dates based on month name and fiscal year.
+        
+        For Economic Development Bank Puerto Rico data:
+        - July-December: use the year before fiscal year
+        - January-June: use the same year as fiscal year
+        """
+        month_mapping = {
+            'July': 7, 'August': 8, 'September': 9, 'October': 10,
+            'November': 11, 'December': 12, 'January': 1, 'February': 2,
+            'March': 3, 'April': 4, 'May': 5, 'June': 6
+        }
+        month_num = month_mapping.get(row['Month'])
+        if not month_num:
+            return None
+            
+        year = int(row['Year'])
+        if month_num >= 7:  # July through December
+            return pd.to_datetime(f'{year - 1}-{month_num}-01')  # Use year BEFORE fiscal year
+        else:  # January through June
+            return pd.to_datetime(f'{year}-{month_num}-01')  # Use same year as fiscal year
+    
+    def insert_data(self, data: pd.DataFrame) -> None:
+        """Insert processed data into database"""
+        if data.empty:
+            logger.warning(f"No data to insert for {self.table_name}")
+            return
+            
+        # Convert column name to lowercase with underscore format
+        column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
+        
+        # Rename columns to match database schema
+        data = data.rename(columns={'Date': 'date', self.value_column: column_name})
+        
+        # Format date as string for database
+        data['date'] = data['date'].dt.strftime('%Y-%m-%d')
+        
+        # Use data tracker's smart update
+        smart_update(
+            azure_connector=self.azure,
+            dataset_name=self.table_name,
+            data_df=data,
+            date_field='date',
+            value_fields=[column_name]
+        )
+
+
+class QuarterlyDataScraper(BaseEDBScraper):
+    """
+    Generic scraper for quarterly data that follows the common EDB pattern.
+    
+    This handles data where:
+    - Data is organized by quarters (rows) and fiscal years (columns)
+    - First row contains fiscal year headers
+    - First column contains quarter names (e.g., "Jul-Sep")
+    - Data follows the fiscal year pattern (July-June)
+    """
+    
+    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
+        super().__init__(azure_connector)
+        self.table_name = config['table_name']
+        self.value_column = config['value_column']
+        self.value_type = config.get('value_type', 'float')
+        
+    def create_table(self) -> None:
+        """Create the database table if it doesn't exist"""
+        self.azure.create_table(self.table_name)
+
+    def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Process raw data into standardized format"""
+        # Set the fiscal year as column headers
+        fiscal_years = df.iloc[0, 1:].astype(int)
+        df.columns = ['Quarter'] + list(fiscal_years)
+        
+        # Clean up the quarters data
+        df = df.iloc[1:].copy()
+        df['Quarter'] = df['Quarter'].str.strip()
+        
+        # Melt the dataframe
+        df_melted = pd.melt(df, id_vars=['Quarter'], var_name='Year', value_name=self.value_column)
+        
+        # Create proper dates
+        df_melted['Date'] = df_melted.apply(self._create_date, axis=1)
+        
+        # Clean and sort
+        df_melted = df_melted.dropna(subset=['Date'])
+        df_melted[self.value_column] = pd.to_numeric(df_melted[self.value_column], errors='coerce')
+        df_melted = df_melted.dropna(subset=[self.value_column])
+        df_melted = df_melted.sort_values(by='Date').reset_index(drop=True)
+        
+        return df_melted[['Date', self.value_column]]
+    
+    def _create_date(self, row: pd.Series) -> Optional[pd.Timestamp]:
+        """
+        Create proper dates for quarterly data based on quarter and fiscal year.
+        
+        For Economic Development Bank Puerto Rico data:
+        - Jul-Sep: 1st quarter (Q1) of fiscal year - use first day of next month (Oct 1)
+        - Oct-Dec: 2nd quarter (Q2) of fiscal year - use first day of next month (Jan 1)
+        - Jan-Mar: 3rd quarter (Q3) of fiscal year - use first day of next month (Apr 1)
+        - Apr-Jun: 4th quarter (Q4) of fiscal year - use first day of next month (Jul 1)
+        
+        This aligns with the first-of-month pattern used in monthly data.
+        """
+        quarter_map = {
+            'Jul-Sep': ('10-01', -1),  # (month-day, year offset from fiscal year)
+            'Oct-Dec': ('01-01', 0),   # Note: Jan 1 of the fiscal year
+            'Jan-Mar': ('04-01', 0),
+            'Apr-Jun': ('07-01', 0)
+        }
+        
+        if row['Quarter'] not in quarter_map:
+            return None
+        
+        month_day, year_offset = quarter_map[row['Quarter']]
+        fiscal_year = int(row['Year'])
+        calendar_year = fiscal_year + year_offset
+        
+        return pd.to_datetime(f'{calendar_year}-{month_day}')
+        
+    def insert_data(self, data: pd.DataFrame) -> None:
+        """Insert processed data into database"""
+        if data.empty:
+            logger.warning(f"No data to insert for {self.table_name}")
+            return
+            
+        # Convert column name to lowercase with underscore format
+        column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
+        
+        # For IndividualLoans specifically, ensure it becomes individual_loans
+        if self.value_column == 'IndividualLoans':
+            column_name = 'individual_loans'
+        
+        # Rename columns to match database schema
+        data = data.rename(columns={'Date': 'date', self.value_column: column_name})
+        
+        # Format date as string for database
+        data['date'] = data['date'].dt.strftime('%Y-%m-%d')
+        
+        # Use data tracker's smart update
+        smart_update(
+            azure_connector=self.azure,
+            dataset_name=self.table_name,
+            data_df=data,
+            date_field='date',
+            value_fields=[column_name]
+        )
+
+
+class FREDScraper:
+    """
+    Scraper for FRED (Federal Reserve Economic Data) API.
+    """
+    
+    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
+        """
+        Initialize the FRED scraper.
+        
+        Args:
+            azure_connector: Azure connector instance
+            config: Scraper configuration
+        """
+        self.azure = azure_connector
+        self.table_name = config['table_name']
+        self.value_column = config['value_column']
+        self.value_type = config.get('value_type', 'float')
+        self.fred_series_id = config['fred_series_id']
+        self.frequency = config.get('frequency', 'm')  # Default to monthly
+        
+        # Try to get API key from Key Vault first, then environment variable
+        try:
+            if azure_connector.secret_client:
+                self.api_key = azure_connector.get_secret("FRED-API-KEY")
+            else:
+                # Fallback to environment variable
+                self.api_key = os.environ.get("FRED_API_KEY")
+        except Exception as e:
+            logger.warning(f"Could not retrieve FRED API key from Key Vault: {e}")
+            # Fallback to environment variable
+            self.api_key = os.environ.get("FRED_API_KEY")
+        
+        if not self.api_key:
+            raise ValueError("FRED API key not found in Key Vault or environment variables")
+        
+        # Set default start date
+        self.start_date = FRED_START_DATE
+    
+    def create_table(self) -> None:
+        """Create the database table if it doesn't exist"""
+        self.azure.create_table(self.table_name)
+    
+    def fetch_fred_data(self, start_date: Optional[str] = None) -> Optional[pd.DataFrame]:
+        """
+        Fetch data from FRED API.
+        
+        Args:
+            start_date: Optional start date in YYYY-MM-DD format
+            
+        Returns:
+            DataFrame with date and value columns or None if failed
+        """
+        # First check if we have cached data in blob storage
+        container_name = "raw-files"
+        blob_name = f"fred_{self.fred_series_id}.json"
+        
+        # Ensure container exists
+        self.azure.create_container(container_name)
+        
+        base_url = "https://api.stlouisfed.org/fred/series/observations"
+        
+        params = {
+            "series_id": self.fred_series_id,
+            "api_key": self.api_key,
+            "file_type": "json",
+            "frequency": self.frequency,  # Set from config
+            "sort_order": "desc",
+            "limit": 1000  # Get more historical data
+        }
+        
+        # Use the provided start date, or fall back to the default one
+        params["observation_start"] = start_date if start_date else self.start_date
+            
+        try:
+            # Try to get data from FRED API
+            response = requests.get(base_url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'observations' not in data:
+                logger.error(f"No observations in FRED API response for {self.fred_series_id}")
+                return None
+                
+            # Save the raw JSON to blob storage for future reference
+            self.azure.upload_blob(container_name, blob_name, json.dumps(data))
+            
+            # Convert to DataFrame
+            df = pd.DataFrame(data['observations'])
+            
+            # Rename columns and convert types
+            df = df.rename(columns={'date': 'Date', 'value': self.value_column})
+            df['Date'] = pd.to_datetime(df['Date'])
+            
+            # Handle cases where value is "." (missing data)
+            df[self.value_column] = df[self.value_column].replace('.', None)
+            df[self.value_column] = pd.to_numeric(df[self.value_column], errors='coerce')
+            
+            # Drop rows with missing values
+            df = df.dropna(subset=[self.value_column])
+            
+            # Sort by date
+            df = df.sort_values('Date').reset_index(drop=True)
+            
+            # Keep only essential columns
+            return df[['Date', self.value_column]]
+            
+        except Exception as e:
+            logger.exception(f"Error fetching data from FRED API for {self.fred_series_id}: {e}")
+            return None
+    
+    def process_data(self, df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+        """
+        Process raw data.
+        Note: For FRED data, we already get processed data from the API.
+        
+        Args:
+            df: Optional DataFrame (not used for FRED as we fetch directly)
+            
+        Returns:
+            Processed DataFrame
+        """
+        # If no DataFrame is provided, fetch from FRED
+        if df is None:
+            df = self.fetch_fred_data()
+            
+        if df is None or df.empty:
+            return pd.DataFrame(columns=['Date', self.value_column])
+        
+        # Apply date adjustment for quarterly data
+        if self.frequency == 'q':
+            df['Date'] = df['Date'].apply(self._adjust_quarterly_date)
+            
+        # Apply value type conversion if needed
+        if self.value_type == 'int':
+            df[self.value_column] = df[self.value_column].round().astype(int)
+            
+        return df
+    
+    def _adjust_quarterly_date(self, date):
+        """
+        Adjust quarterly dates to first-of-month after quarter ends.
+        
+        FRED returns the first day of the quarter (e.g., 2025-01-01 for Q1 2025),
+        but we want the first day of the month after the quarter ends:
+        - Q1 (Jan-Mar) -> Apr 1
+        - Q2 (Apr-Jun) -> Jul 1
+        - Q3 (Jul-Sep) -> Oct 1
+        - Q4 (Oct-Dec) -> Jan 1 (of next year)
+        
+        This aligns with the first-of-month pattern used in monthly data.
+        
+        Args:
+            date: pandas Timestamp with the first day of a quarter
+                
+        Returns:
+            pandas Timestamp with the first day of month after quarter end
+        """
+        # Get quarter number (1-4)
+        quarter = (date.month - 1) // 3 + 1
+        
+        # Map quarters to first day of next month
+        if quarter == 1:  # Q1 (Jan-Mar)
+            return pd.Timestamp(date.year, 4, 1)  # Apr 1
+        elif quarter == 2:  # Q2 (Apr-Jun)
+            return pd.Timestamp(date.year, 7, 1)  # Jul 1
+        elif quarter == 3:  # Q3 (Jul-Sep)
+            return pd.Timestamp(date.year, 10, 1)  # Oct 1
+        else:  # Q4 (Oct-Dec)
+            return pd.Timestamp(date.year + 1, 1, 1)  # Jan 1 of next year
+    
+    def insert_data(self, data: pd.DataFrame) -> None:
+        """Insert processed data into database"""
+        if data.empty:
+            logger.warning(f"No data to insert for {self.fred_series_id}")
+            return
+            
+        # Convert column name to lowercase with underscore format
+        column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
+        
+        # Rename columns to match database schema
+        data = data.rename(columns={'Date': 'date', self.value_column: column_name})
+        
+        # Format date as string for database
+        data['date'] = data['date'].dt.strftime('%Y-%m-%d')
+        
+        # Use smart update
+        smart_update(
+            azure_connector=self.azure,
+            dataset_name=self.table_name,
+            data_df=data,
+            date_field='date',
+            value_fields=[column_name]
+        )
+    
+    def update_last_run(self, dataset_name: str) -> None:
+        """Update timestamp of last scraper run"""
+        self.azure.update_last_run(dataset_name)
+    
+    def get_last_run(self, dataset_name: str) -> Optional[datetime]:
+        """Get timestamp of last scraper run"""
+        return self.azure.get_last_run(dataset_name)
+    
+    def should_update(self, dataset_name: str, update_frequency_hours: int = 24) -> bool:
+        """Check if dataset should be updated based on last update time"""
+        return self.azure.should_update(dataset_name, update_frequency_hours)
+
+
+class NYUSternScraper:
+    """
+    Scraper for NYU Stern Equity Risk Premium data.
+    """
+    
+    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
+        """
+        Initialize the NYU Stern scraper.
+        
+        Args:
+            azure_connector: Azure connector instance
+            config: Scraper configuration
+        """
+        self.azure = azure_connector
+        self.table_name = config['table_name']
+        self.url = config['url']
+        self.sheet_name = config['sheet_name']
+        
+    def create_table(self) -> None:
+        """Create the database table if it doesn't exist"""
+        self.azure.create_table(self.table_name)
+
+    def download_excel(self) -> Optional[bytes]:
+        """Download Excel file from specified URL"""
+        try:
+            # First check if we have cached data in blob storage
+            container_name = "raw-files"
+            blob_name = "NYU_ERP.xlsx"
+            
+            # Ensure container exists
+            self.azure.create_container(container_name)
+            
+            # Try to download from blob storage first
+            excel_content = self.azure.download_blob(container_name, blob_name)
+            
+            if excel_content:
+                logger.info("Retrieved NYU Stern data from blob storage")
+                return excel_content
+                
+            # If not in blob storage, download from URL
+            response = requests.get(self.url)
+            response.raise_for_status()
+            excel_content = response.content
+            
+            # Save to blob storage for future use
+            self.azure.upload_blob(container_name, blob_name, excel_content)
+            logger.info("Downloaded NYU Stern data from URL and saved to blob storage")
+            
+            return excel_content
+        except Exception as e:
+            logger.exception(f"Error downloading NYU Stern data: {e}")
+            return None
+
+    def process_data(self) -> pd.DataFrame:
+        """
+        Download and process the NYU Stern ERP data.
+        
+        Returns:
+            Processed DataFrame with date and ERP values
+        """
+        # Download the Excel file
+        excel_content = self.download_excel()
+        if not excel_content:
+            logger.error("Failed to download NYU Stern data")
+            return pd.DataFrame()
+            
+        try:
+            # Read the Excel file
+            df = pd.read_excel(BytesIO(excel_content), sheet_name=self.sheet_name)
+            
+            # Clean column names
+            df.columns = [str(col).strip() for col in df.columns]
+            
+            # Extract relevant columns
+            relevant_cols = ['Start of month', 'T.Bond Rate', 'ERP (T12m)', 'Expected Return']
+            
+            # Check if all relevant columns exist
+            missing_cols = [col for col in relevant_cols if col not in df.columns]
+            if missing_cols:
+                # Attempt to find similar column names
+                for missing_col in missing_cols[:]:
+                    for col in df.columns:
+                        if missing_col.lower() in col.lower():
+                            df.rename(columns={col: missing_col}, inplace=True)
+                            missing_cols.remove(missing_col)
+                            break
+            
+            # If we still have missing columns, log error and return empty dataframe
+            if missing_cols:
+                logger.error(f"Missing columns in NYU Stern data: {missing_cols}")
+                logger.error(f"Available columns: {df.columns.tolist()}")
+                return pd.DataFrame()
+            
+            # Keep only the relevant columns
+            df = df[relevant_cols]
+            
+            # Rename columns to match database schema
+            df.rename(columns={
+                'Start of month': 'date',
+                'T.Bond Rate': 'tbond_rate',
+                'ERP (T12m)': 'erp_t12m',
+                'Expected Return': 'expected_return'
+            }, inplace=True)
+            
+            # Ensure date column is properly formatted as datetime
+            df['date'] = pd.to_datetime(df['date'])
+            
+            # Process each column with percentage values individually by row
+            for col in ['tbond_rate', 'erp_t12m', 'expected_return']:
+                if col not in df.columns:
+                    continue
+                
+                # Convert each value individually by row
+                for idx, value in df[col].items():
+                    # Convert to string for inspection
+                    value_str = str(value)
+                    
+                    # Check if it has a % symbol
+                    if '%' in value_str:
+                        # Remove % and convert
+                        df.at[idx, col] = float(value_str.replace('%', '')) / 100
+                    else:
+                        # Try to convert to float
+                        try:
+                            float_val = float(value)
+                            # If it's a percentage value (e.g., 3.96 instead of 0.0396)
+                            # Values in the data are typically in the 3-5% range as decimals
+                            if float_val > 0.2:  # Threshold for identifying percentages
+                                df.at[idx, col] = float_val / 100
+                            else:
+                                # Already in decimal form
+                                df.at[idx, col] = float_val
+                        except (ValueError, TypeError):
+                            # Leave as is if conversion fails
+                            pass
+            
+            # Sort by date
+            df.sort_values('date', inplace=True)
+            
+            # Drop rows with NaN values
+            df.dropna(inplace=True)
+            
+            return df
+            
+        except Exception as e:
+            logger.exception(f"Error processing NYU Stern data: {e}")
+            return pd.DataFrame()
+    
+    def insert_data(self, data: pd.DataFrame) -> None:
+        """Insert processed data into database"""
+        if data.empty:
+            logger.warning("No data to insert for NYU Stern ERP")
+            return
+        
+        # Format date as string for database
+        data['date'] = data['date'].dt.strftime('%Y-%m-%d')
+        
+        # Use smart update
+        smart_update(
+            azure_connector=self.azure,
+            dataset_name=self.table_name,
+            data_df=data,
+            date_field='date',
+            value_fields=['tbond_rate', 'erp_t12m', 'expected_return']
+        )
+    
+    def update_last_run(self, dataset_name: str) -> None:
+        """Update timestamp of last scraper run"""
+        self.azure.update_last_run(dataset_name)
+    
+    def get_last_run(self, dataset_name: str) -> Optional[datetime]:
+        """Get timestamp of last scraper run"""
+        return self.azure.get_last_run(dataset_name)
+    
+    def should_update(self, dataset_name: str, update_frequency_hours: int = 24) -> bool:
+        """Check if dataset should be updated based on last update time"""
+        return self.azure.should_update(dataset_name, update_frequency_hours)
 
 class AzureConnector:
     """
@@ -501,7 +1748,6 @@ class AzureConnector:
             entity = self.get_entity("scrapermetadata", "dataset", dataset_name)
             
             if entity and "last_run" in entity:
-                from dateutil import parser
                 return parser.parse(entity["last_run"])
             
             return None
@@ -545,6 +1791,76 @@ def initialize_revision_tracking(azure_connector: AzureConnector) -> bool:
         bool: True if successful, False otherwise
     """
     return azure_connector.create_table("datarevisions")
+
+def get_revision_history(azure_connector: AzureConnector, dataset: str, 
+                         date: Optional[str] = None, field: Optional[str] = None, 
+                         limit: Optional[int] = None) -> pd.DataFrame:
+    """
+    Get revision history for a dataset or specific data point.
+    
+    Args:
+        azure_connector: AzureConnector instance
+        dataset: The dataset name
+        date: Optional specific date to filter by
+        field: Optional specific field to filter by
+        limit: Optional maximum number of revisions to return
+    
+    Returns:
+        DataFrame with revision history
+    """
+    # Build filter string
+    filter_parts = [f"PartitionKey eq '{dataset}'"]
+    
+    if date:
+        filter_parts.append(f"data_date eq '{date}'")
+    
+    if field:
+        filter_parts.append(f"value_field eq '{field}'")
+    
+    query_filter = " and ".join(filter_parts)
+    
+    # Query revisions
+    revisions = azure_connector.query_entities("datarevisions", query_filter)
+    
+    if not revisions:
+        # Return empty dataframe with expected columns
+        return pd.DataFrame(columns=[
+            'dataset', 'data_date', 'value_field', 
+            'old_value', 'new_value', 'revision_date'
+        ])
+    
+    # Convert to DataFrame
+    df = pd.DataFrame(revisions)
+    
+    # Convert date columns to datetime
+    if 'data_date' in df.columns:
+        df['data_date'] = pd.to_datetime(df['data_date'])
+    if 'revision_date' in df.columns:
+        df['revision_date'] = pd.to_datetime(df['revision_date'])
+    
+    # Sort by revision date (most recent first)
+    df = df.sort_values('revision_date', ascending=False)
+    
+    # Apply limit if specified
+    if limit and len(df) > limit:
+        df = df.head(limit)
+    
+    # Rename columns for consistency with original implementation
+    column_mapping = {
+        'PartitionKey': 'dataset',
+        'data_date': 'data_date',
+        'value_field': 'value_field',
+        'old_value': 'old_value',
+        'new_value': 'new_value',
+        'revision_date': 'revision_date'
+    }
+    
+    # Select and rename columns
+    columns_to_keep = [col for col in column_mapping.keys() if col in df.columns]
+    df = df[columns_to_keep].rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
+    
+    return df
+
 
 def smart_update(azure_connector: AzureConnector, dataset_name: str, 
                 data_df: pd.DataFrame, date_field: str, value_fields: List[str]) -> Dict[str, int]:
@@ -685,1051 +2001,3 @@ def smart_update(azure_connector: AzureConnector, dataset_name: str,
                 f"{results['updated']} updated, {results['revisions']} revisions tracked")
     
     return results
-
-def get_revision_history(azure_connector: AzureConnector, dataset: str, 
-                         date: Optional[str] = None, field: Optional[str] = None, 
-                         limit: Optional[int] = None) -> pd.DataFrame:
-    """
-    Get revision history for a dataset or specific data point.
-    
-    Args:
-        azure_connector: AzureConnector instance
-        dataset: The dataset name
-        date: Optional specific date to filter by
-        field: Optional specific field to filter by
-        limit: Optional maximum number of revisions to return
-    
-    Returns:
-        DataFrame with revision history
-    """
-    # Build filter string
-    filter_parts = [f"PartitionKey eq '{dataset}'"]
-    
-    if date:
-        filter_parts.append(f"data_date eq '{date}'")
-    
-    if field:
-        filter_parts.append(f"value_field eq '{field}'")
-    
-    query_filter = " and ".join(filter_parts)
-    
-    # Query revisions
-    revisions = azure_connector.query_entities("datarevisions", query_filter)
-    
-    if not revisions:
-        # Return empty dataframe with expected columns
-        return pd.DataFrame(columns=[
-            'dataset', 'data_date', 'value_field', 
-            'old_value', 'new_value', 'revision_date'
-        ])
-    
-    # Convert to DataFrame
-    df = pd.DataFrame(revisions)
-    
-    # Convert date columns to datetime
-    if 'data_date' in df.columns:
-        df['data_date'] = pd.to_datetime(df['data_date'])
-    if 'revision_date' in df.columns:
-        df['revision_date'] = pd.to_datetime(df['revision_date'])
-    
-    # Sort by revision date (most recent first)
-    df = df.sort_values('revision_date', ascending=False)
-    
-    # Apply limit if specified
-    if limit and len(df) > limit:
-        df = df.head(limit)
-    
-    # Rename columns for consistency with original implementation
-    column_mapping = {
-        'PartitionKey': 'dataset',
-        'data_date': 'data_date',
-        'value_field': 'value_field',
-        'old_value': 'old_value',
-        'new_value': 'new_value',
-        'revision_date': 'revision_date'
-    }
-    
-    # Select and rename columns
-    columns_to_keep = [col for col in column_mapping.keys() if col in df.columns]
-    df = df[columns_to_keep].rename(columns={k: v for k, v in column_mapping.items() if k in df.columns})
-    
-    return df
-
-#############################
-# Common Scraper Base Class #
-#############################
-
-class BaseEDBScraper:
-    """Base class for Economic Development Bank scrapers"""
-    def __init__(self, azure_connector: AzureConnector):
-        self.azure = azure_connector
-
-    def create_table(self) -> None:
-        """Create database table if it doesn't exist"""
-        pass
-
-    def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process raw data into a standardized format"""
-        pass
-
-    def insert_data(self, data: pd.DataFrame) -> None:
-        """Insert processed data into database"""
-        pass
-
-    def download_excel(self, url: str, file_name: str) -> Optional[bytes]:
-        """Download Excel file from specified URL"""
-        try:
-            # First check if the file is already in blob storage
-            blob_name = file_name
-            container_name = "raw-files"
-            
-            # Ensure container exists
-            self.azure.create_container(container_name)
-            
-            # Try to download from blob storage first
-            excel_content = self.azure.download_blob(container_name, blob_name)
-            
-            if excel_content:
-                logger.info(f"Retrieved {file_name} from blob storage")
-                return excel_content
-            
-            # If not in blob storage, download from URL
-            response = requests.get(url + file_name)
-            response.raise_for_status()
-            excel_content = response.content
-            
-            # Save to blob storage for future use
-            self.azure.upload_blob(container_name, blob_name, excel_content)
-            logger.info(f"Downloaded {file_name} from URL and saved to blob storage")
-            
-            return excel_content
-        except Exception as e:
-            logger.error(f"Download error: {e}")
-            return None
-
-    def extract_data(self, excel_content: bytes, sheet_name: str, 
-                     data_location: str) -> Optional[pd.DataFrame]:
-        """Extract data from specific location in Excel file"""
-        try:
-            df = pd.read_excel(BytesIO(excel_content), sheet_name=sheet_name, header=None)
-            start_cell, end_cell = data_location.split(":")
-            start_row = int(start_cell[1:]) - 1
-            start_col = ord(start_cell[0].upper()) - ord('A')
-            end_row = int(end_cell[1:]) - 1
-            end_col = ord(end_cell[0].upper()) - ord('A')
-            return df.iloc[start_row:end_row + 1, start_col:end_col + 1]
-        except Exception as e:
-            logger.error(f"Extraction error: {e}")
-            return None
-
-    def update_last_run(self, dataset_name: str) -> None:
-        """Update timestamp of last scraper run"""
-        self.azure.update_last_run(dataset_name)
-
-    def get_last_run(self, dataset_name: str) -> Optional[datetime]:
-        """Get timestamp of last scraper run"""
-        return self.azure.get_last_run(dataset_name)
-
-    def should_update(self, dataset_name: str, update_frequency_hours: int = 24) -> bool:
-        """Check if dataset should be updated based on last update time"""
-        return self.azure.should_update(dataset_name, update_frequency_hours)
-
-##########################
-# Monthly Data Scraper #
-##########################
-
-class MonthlyDataScraper(BaseEDBScraper):
-    """
-    Generic scraper for monthly data that follows the common EDB pattern.
-    
-    This handles data where:
-    - Data is organized by months (rows) and fiscal years (columns)
-    - First row contains fiscal year headers
-    - First column contains month names
-    - Data follows the fiscal year pattern (July-June)
-    """
-    
-    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
-        super().__init__(azure_connector)
-        self.table_name = config['table_name']
-        self.value_column = config['value_column']
-        self.value_type = config.get('value_type', 'float')
-        
-    def create_table(self) -> None:
-        """Create the database table if it doesn't exist"""
-        self.azure.create_table(self.table_name)
-
-    def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process raw data into standardized format"""
-        # Set the fiscal years as column headers
-        df.columns = ['Month'] + [int(year) for year in df.iloc[0, 1:]]
-        df = df.iloc[1:].reset_index(drop=True)
-        
-        # Melt the dataframe to transform from wide to long format
-        df_melted = pd.melt(df, id_vars=['Month'], var_name='Year', value_name=self.value_column)
-        
-        # Create dates from month names and fiscal years
-        df_melted['Date'] = df_melted.apply(self._create_date, axis=1)
-        df_melted = df_melted.dropna(subset=['Date'])
-        df_melted = df_melted.sort_values(by='Date').reset_index(drop=True)
-        
-        # Convert values to the appropriate type
-        if self.value_type == 'int':
-            df_melted[self.value_column] = pd.to_numeric(df_melted[self.value_column], errors='coerce')
-            df_melted = df_melted.dropna(subset=[self.value_column])
-            df_melted[self.value_column] = df_melted[self.value_column].round().astype(int)
-        else:  # float
-            df_melted[self.value_column] = pd.to_numeric(df_melted[self.value_column], errors='coerce')
-            df_melted = df_melted.dropna(subset=[self.value_column])
-        
-        return df_melted[['Date', self.value_column]]
-    
-    def _create_date(self, row: pd.Series) -> Optional[pd.Timestamp]:
-        """
-        Create proper dates based on month name and fiscal year.
-        
-        For Economic Development Bank Puerto Rico data:
-        - July-December: use the year before fiscal year
-        - January-June: use the same year as fiscal year
-        """
-        month_mapping = {
-            'July': 7, 'August': 8, 'September': 9, 'October': 10,
-            'November': 11, 'December': 12, 'January': 1, 'February': 2,
-            'March': 3, 'April': 4, 'May': 5, 'June': 6
-        }
-        month_num = month_mapping.get(row['Month'])
-        if not month_num:
-            return None
-            
-        year = int(row['Year'])
-        if month_num >= 7:  # July through December
-            return pd.to_datetime(f'{year - 1}-{month_num}-01')  # Use year BEFORE fiscal year
-        else:  # January through June
-            return pd.to_datetime(f'{year}-{month_num}-01')  # Use same year as fiscal year
-    
-    def insert_data(self, data: pd.DataFrame) -> None:
-        """Insert processed data into database"""
-        if data.empty:
-            logger.warning(f"No data to insert for {self.table_name}")
-            return
-            
-        # Convert column name to lowercase with underscore format
-        column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
-        
-        # Rename columns to match database schema
-        data = data.rename(columns={'Date': 'date', self.value_column: column_name})
-        
-        # Format date as string for database
-        data['date'] = data['date'].dt.strftime('%Y-%m-%d')
-        
-        # Use data tracker's smart update
-        smart_update(
-            azure_connector=self.azure,
-            dataset_name=self.table_name,
-            data_df=data,
-            date_field='date',
-            value_fields=[column_name]
-        )
-
-
-class QuarterlyDataScraper(BaseEDBScraper):
-    """
-    Generic scraper for quarterly data that follows the common EDB pattern.
-    
-    This handles data where:
-    - Data is organized by quarters (rows) and fiscal years (columns)
-    - First row contains fiscal year headers
-    - First column contains quarter names (e.g., "Jul-Sep")
-    - Data follows the fiscal year pattern (July-June)
-    """
-    
-    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
-        super().__init__(azure_connector)
-        self.table_name = config['table_name']
-        self.value_column = config['value_column']
-        self.value_type = config.get('value_type', 'float')
-        
-    def create_table(self) -> None:
-        """Create the database table if it doesn't exist"""
-        self.azure.create_table(self.table_name)
-
-    def process_data(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Process raw data into standardized format"""
-        # Set the fiscal year as column headers
-        fiscal_years = df.iloc[0, 1:].astype(int)
-        df.columns = ['Quarter'] + list(fiscal_years)
-        
-        # Clean up the quarters data
-        df = df.iloc[1:].copy()
-        df['Quarter'] = df['Quarter'].str.strip()
-        
-        # Melt the dataframe
-        df_melted = pd.melt(df, id_vars=['Quarter'], var_name='Year', value_name=self.value_column)
-        
-        # Create proper dates
-        df_melted['Date'] = df_melted.apply(self._create_date, axis=1)
-        
-        # Clean and sort
-        df_melted = df_melted.dropna(subset=['Date'])
-        df_melted[self.value_column] = pd.to_numeric(df_melted[self.value_column], errors='coerce')
-        df_melted = df_melted.dropna(subset=[self.value_column])
-        df_melted = df_melted.sort_values(by='Date').reset_index(drop=True)
-        
-        return df_melted[['Date', self.value_column]]
-    
-    def _create_date(self, row: pd.Series) -> Optional[pd.Timestamp]:
-        """
-        Create proper dates for quarterly data based on quarter and fiscal year.
-        
-        For Economic Development Bank Puerto Rico data:
-        - Jul-Sep: 1st quarter (Q1) of fiscal year - use first day of next month (Oct 1)
-        - Oct-Dec: 2nd quarter (Q2) of fiscal year - use first day of next month (Jan 1)
-        - Jan-Mar: 3rd quarter (Q3) of fiscal year - use first day of next month (Apr 1)
-        - Apr-Jun: 4th quarter (Q4) of fiscal year - use first day of next month (Jul 1)
-        
-        This aligns with the first-of-month pattern used in monthly data.
-        """
-        quarter_map = {
-            'Jul-Sep': ('10-01', -1),  # (month-day, year offset from fiscal year)
-            'Oct-Dec': ('01-01', 0),   # Note: Jan 1 of the fiscal year
-            'Jan-Mar': ('04-01', 0),
-            'Apr-Jun': ('07-01', 0)
-        }
-        
-        if row['Quarter'] not in quarter_map:
-            return None
-        
-        month_day, year_offset = quarter_map[row['Quarter']]
-        fiscal_year = int(row['Year'])
-        calendar_year = fiscal_year + year_offset
-        
-        return pd.to_datetime(f'{calendar_year}-{month_day}')
-        
-    def insert_data(self, data: pd.DataFrame) -> None:
-        """Insert processed data into database"""
-        if data.empty:
-            logger.warning(f"No data to insert for {self.table_name}")
-            return
-            
-        # Convert column name to lowercase with underscore format
-        column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
-        
-        # For IndividualLoans specifically, ensure it becomes individual_loans
-        if self.value_column == 'IndividualLoans':
-            column_name = 'individual_loans'
-        
-        # Rename columns to match database schema
-        data = data.rename(columns={'Date': 'date', self.value_column: column_name})
-        
-        # Format date as string for database
-        data['date'] = data['date'].dt.strftime('%Y-%m-%d')
-        
-        # Use data tracker's smart update
-        smart_update(
-            azure_connector=self.azure,
-            dataset_name=self.table_name,
-            data_df=data,
-            date_field='date',
-            value_fields=[column_name]
-        )
-
-
-class FREDScraper:
-    """
-    Scraper for FRED (Federal Reserve Economic Data) API.
-    """
-    
-    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
-        """
-        Initialize the FRED scraper.
-        
-        Args:
-            azure_connector: Azure connector instance
-            config: Scraper configuration
-        """
-        self.azure = azure_connector
-        self.table_name = config['table_name']
-        self.value_column = config['value_column']
-        self.value_type = config.get('value_type', 'float')
-        self.fred_series_id = config['fred_series_id']
-        self.frequency = config.get('frequency', 'm')  # Default to monthly
-        
-        # Try to get API key from Key Vault first, then environment variable
-        try:
-            if azure_connector.secret_client:
-                self.api_key = azure_connector.get_secret("FRED-API-KEY")
-            else:
-                # Fallback to environment variable
-                self.api_key = os.environ.get("FRED_API_KEY")
-        except Exception as e:
-            logger.warning(f"Could not retrieve FRED API key from Key Vault: {e}")
-            # Fallback to environment variable
-            self.api_key = os.environ.get("FRED_API_KEY")
-        
-        if not self.api_key:
-            raise ValueError("FRED API key not found in Key Vault or environment variables")
-        
-        # Set default start date
-        self.start_date = "2014-01-01"
-    
-    def create_table(self) -> None:
-        """Create the database table if it doesn't exist"""
-        self.azure.create_table(self.table_name)
-    
-    def fetch_fred_data(self, start_date: Optional[str] = None) -> Optional[pd.DataFrame]:
-        """
-        Fetch data from FRED API.
-        
-        Args:
-            start_date: Optional start date in YYYY-MM-DD format
-            
-        Returns:
-            DataFrame with date and value columns or None if failed
-        """
-        # First check if we have cached data in blob storage
-        container_name = "raw-files"
-        blob_name = f"fred_{self.fred_series_id}.json"
-        
-        # Ensure container exists
-        self.azure.create_container(container_name)
-        
-        base_url = "https://api.stlouisfed.org/fred/series/observations"
-        
-        params = {
-            "series_id": self.fred_series_id,
-            "api_key": self.api_key,
-            "file_type": "json",
-            "frequency": self.frequency,  # Set from config
-            "sort_order": "desc",
-            "limit": 1000  # Get more historical data
-        }
-        
-        # Use the provided start date, or fall back to the default one
-        params["observation_start"] = start_date if start_date else self.start_date
-            
-        try:
-            # Try to get data from FRED API
-            response = requests.get(base_url, params=params)
-            response.raise_for_status()
-            data = response.json()
-            
-            if 'observations' not in data:
-                logger.error(f"No observations in FRED API response for {self.fred_series_id}")
-                return None
-                
-            # Save the raw JSON to blob storage for future reference
-            self.azure.upload_blob(container_name, blob_name, json.dumps(data))
-            
-            # Convert to DataFrame
-            df = pd.DataFrame(data['observations'])
-            
-            # Rename columns and convert types
-            df = df.rename(columns={'date': 'Date', 'value': self.value_column})
-            df['Date'] = pd.to_datetime(df['Date'])
-            
-            # Handle cases where value is "." (missing data)
-            df[self.value_column] = df[self.value_column].replace('.', None)
-            df[self.value_column] = pd.to_numeric(df[self.value_column], errors='coerce')
-            
-            # Drop rows with missing values
-            df = df.dropna(subset=[self.value_column])
-            
-            # Sort by date
-            df = df.sort_values('Date').reset_index(drop=True)
-            
-            # Keep only essential columns
-            return df[['Date', self.value_column]]
-            
-        except Exception as e:
-            logger.exception(f"Error processing {name}: {str(e)}")
-            return 'failed'
-    
-    # Run all scrapers and track results
-    edb_updated = []
-    edb_no_update = []
-    edb_failed = []
-    
-    # Run EDB scrapers
-    logger.info("Starting EDB data scrapers")
-    for name, config in edb_configs.items():
-        logger.info(f"\nProcessing {name}...")
-        try:
-            scraper = create_scraper(config)
-            status = run_scraper(scraper, name, config)
-            if status == 'updated':
-                edb_updated.append(name)
-            elif status == 'no_update_needed':
-                edb_no_update.append(name)
-            else:
-                edb_failed.append(name)
-        except Exception as e:
-            logger.exception(f"Error setting up {name}: {str(e)}")
-            edb_failed.append(name)
-    
-    # Run FRED scrapers
-    fred_updated = []
-    fred_no_update = []
-    fred_failed = []
-    
-    logger.info("\nStarting FRED data scrapers")
-    for name, config in fred_configs.items():
-        logger.info(f"\nProcessing {name}...")
-        try:
-            scraper = create_scraper(config)
-            status = run_scraper(scraper, name, config)
-            if status == 'updated':
-                fred_updated.append(name)
-            elif status == 'no_update_needed':
-                fred_no_update.append(name)
-            else:
-                fred_failed.append(name)
-        except Exception as e:
-            logger.exception(f"Error setting up {name}: {str(e)}")
-            fred_failed.append(name)
-    
-    # Run NYU Stern scraper
-    nyu_updated = []
-    nyu_no_update = []
-    nyu_failed = []
-    
-    logger.info("\nStarting NYU Stern data scraper")
-    name = 'equity_risk_premium'
-    try:
-        scraper = create_scraper(nyu_config)
-        status = run_scraper(scraper, name, nyu_config)
-        if status == 'updated':
-            nyu_updated.append(name)
-        elif status == 'no_update_needed':
-            nyu_no_update.append(name)
-        else:
-            nyu_failed.append(name)
-    except Exception as e:
-        logger.exception(f"Error setting up {name}: {str(e)}")
-        nyu_failed.append(name)
-    
-    # Combine results
-    all_updated = edb_updated + fred_updated + nyu_updated
-    all_no_update = edb_no_update + fred_no_update + nyu_no_update
-    all_failed = edb_failed + fred_failed + nyu_failed
-    
-    end_time = datetime.utcnow()
-    duration = (end_time - start_time).total_seconds()
-    
-    # Create run summary
-    summary = {
-        "start_time": start_time,
-        "end_time": end_time,
-        "duration_seconds": duration,
-        "total_datasets": len(all_updated) + len(all_no_update) + len(all_failed),
-        "updated": {
-            "count": len(all_updated),
-            "datasets": all_updated
-        },
-        "no_update_needed": {
-            "count": len(all_no_update),
-            "datasets": all_no_update
-        },
-        "failed": {
-            "count": len(all_failed),
-            "datasets": all_failed
-        },
-        "details": {
-            "edb": {
-                "updated": edb_updated,
-                "no_update_needed": edb_no_update,
-                "failed": edb_failed
-            },
-            "fred": {
-                "updated": fred_updated,
-                "no_update_needed": fred_no_update,
-                "failed": fred_failed
-            },
-            "nyu": {
-                "updated": nyu_updated,
-                "no_update_needed": nyu_no_update,
-                "failed": nyu_failed
-            }
-        }
-    }
-    
-    # Save summary to blob storage
-    try:
-        # Convert summary to JSON
-        summary_json = json.dumps(summary, indent=2, default=str)
-        
-        # Create a timestamp for the filename
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        
-        # Upload to blob storage
-        container_name = "logs"
-        blob_name = f"run_summary_{timestamp}.json"
-        
-        # Ensure container exists
-        azure.create_container(container_name)
-        
-        # Upload summary
-        azure.upload_blob(container_name, blob_name, summary_json)
-        logger.info(f"Saved run summary to {container_name}/{blob_name}")
-    except Exception as e:
-        logger.error(f"Error saving run summary: {e}")
-    
-    # Log summary
-    logger.info("\n\n" + "="*50)
-    logger.info(f"Scraping complete in {duration:.2f} seconds.")
-    logger.info(f"EDB: Updated: {len(edb_updated)}, No update needed: {len(edb_no_update)}, Failed: {len(edb_failed)}")
-    logger.info(f"FRED: Updated: {len(fred_updated)}, No update needed: {len(fred_no_update)}, Failed: {len(fred_failed)}")
-    logger.info(f"NYU: Updated: {len(nyu_updated)}, No update needed: {len(nyu_no_update)}, Failed: {len(nyu_failed)}")
-    logger.info(f"TOTAL: Updated: {len(all_updated)}, No update needed: {len(all_no_update)}, Failed: {len(all_failed)}")
-    
-    if all_updated:
-        logger.info(f"Updated scrapers: {', '.join(all_updated)}")
-    if all_no_update:
-        logger.info(f"No update needed: {', '.join(all_no_update)}")
-    if all_failed:
-        logger.error(f"Failed scrapers: {', '.join(all_failed)}")
-    
-    return summary
-
-
-# If this module is run directly
-if __name__ == "__main__":
-    # For local testing
-    main(use_managed_identity=False)(f"Error fetching data from FRED API for {self.fred_series_id}: {e}")
-            return None
-    
-    def process_data(self, df: Optional[pd.DataFrame] = None) -> pd.DataFrame:
-        """
-        Process raw data.
-        Note: For FRED data, we already get processed data from the API.
-        
-        Args:
-            df: Optional DataFrame (not used for FRED as we fetch directly)
-            
-        Returns:
-            Processed DataFrame
-        """
-        # If no DataFrame is provided, fetch from FRED
-        if df is None:
-            df = self.fetch_fred_data()
-            
-        if df is None or df.empty:
-            return pd.DataFrame(columns=['Date', self.value_column])
-        
-        # Apply date adjustment for quarterly data
-        if self.frequency == 'q':
-            df['Date'] = df['Date'].apply(self._adjust_quarterly_date)
-            
-        # Apply value type conversion if needed
-        if self.value_type == 'int':
-            df[self.value_column] = df[self.value_column].round().astype(int)
-            
-        return df
-    
-    def _adjust_quarterly_date(self, date):
-        """
-        Adjust quarterly dates to first-of-month after quarter ends.
-        
-        FRED returns the first day of the quarter (e.g., 2025-01-01 for Q1 2025),
-        but we want the first day of the month after the quarter ends:
-        - Q1 (Jan-Mar) -> Apr 1
-        - Q2 (Apr-Jun) -> Jul 1
-        - Q3 (Jul-Sep) -> Oct 1
-        - Q4 (Oct-Dec) -> Jan 1 (of next year)
-        
-        This aligns with the first-of-month pattern used in monthly data.
-        
-        Args:
-            date: pandas Timestamp with the first day of a quarter
-                
-        Returns:
-            pandas Timestamp with the first day of month after quarter end
-        """
-        # Get quarter number (1-4)
-        quarter = (date.month - 1) // 3 + 1
-        
-        # Map quarters to first day of next month
-        if quarter == 1:  # Q1 (Jan-Mar)
-            return pd.Timestamp(date.year, 4, 1)  # Apr 1
-        elif quarter == 2:  # Q2 (Apr-Jun)
-            return pd.Timestamp(date.year, 7, 1)  # Jul 1
-        elif quarter == 3:  # Q3 (Jul-Sep)
-            return pd.Timestamp(date.year, 10, 1)  # Oct 1
-        else:  # Q4 (Oct-Dec)
-            return pd.Timestamp(date.year + 1, 1, 1)  # Jan 1 of next year
-    
-    def insert_data(self, data: pd.DataFrame) -> None:
-        """Insert processed data into database"""
-        if data.empty:
-            logger.warning(f"No data to insert for {self.fred_series_id}")
-            return
-            
-        # Convert column name to lowercase with underscore format
-        column_name = ''.join(['_'+i.lower() if i.isupper() else i.lower() for i in self.value_column]).lstrip('_')
-        
-        # Rename columns to match database schema
-        data = data.rename(columns={'Date': 'date', self.value_column: column_name})
-        
-        # Format date as string for database
-        data['date'] = data['date'].dt.strftime('%Y-%m-%d')
-        
-        # Use smart update
-        smart_update(
-            azure_connector=self.azure,
-            dataset_name=self.table_name,
-            data_df=data,
-            date_field='date',
-            value_fields=[column_name]
-        )
-    
-    def update_last_run(self, dataset_name: str) -> None:
-        """Update timestamp of last scraper run"""
-        self.azure.update_last_run(dataset_name)
-    
-    def get_last_run(self, dataset_name: str) -> Optional[datetime]:
-        """Get timestamp of last scraper run"""
-        return self.azure.get_last_run(dataset_name)
-    
-    def should_update(self, dataset_name: str, update_frequency_hours: int = 24) -> bool:
-        """Check if dataset should be updated based on last update time"""
-        return self.azure.should_update(dataset_name, update_frequency_hours)
-
-
-class NYUSternScraper:
-    """
-    Scraper for NYU Stern Equity Risk Premium data.
-    """
-    
-    def __init__(self, azure_connector: AzureConnector, config: Dict[str, Any]):
-        """
-        Initialize the NYU Stern scraper.
-        
-        Args:
-            azure_connector: Azure connector instance
-            config: Scraper configuration
-        """
-        self.azure = azure_connector
-        self.table_name = config['table_name']
-        self.url = config['url']
-        self.sheet_name = config['sheet_name']
-        
-    def create_table(self) -> None:
-        """Create the database table if it doesn't exist"""
-        self.azure.create_table(self.table_name)
-
-    def download_excel(self) -> Optional[bytes]:
-        """Download Excel file from specified URL"""
-        try:
-            # First check if we have cached data in blob storage
-            container_name = "raw-files"
-            blob_name = "NYU_ERP.xlsx"
-            
-            # Ensure container exists
-            self.azure.create_container(container_name)
-            
-            # Try to download from blob storage first
-            excel_content = self.azure.download_blob(container_name, blob_name)
-            
-            if excel_content:
-                logger.info("Retrieved NYU Stern data from blob storage")
-                return excel_content
-                
-            # If not in blob storage, download from URL
-            response = requests.get(self.url)
-            response.raise_for_status()
-            excel_content = response.content
-            
-            # Save to blob storage for future use
-            self.azure.upload_blob(container_name, blob_name, excel_content)
-            logger.info("Downloaded NYU Stern data from URL and saved to blob storage")
-            
-            return excel_content
-        except Exception as e:
-            logger.exception(f"Error downloading NYU Stern data: {e}")
-            return None
-
-    def process_data(self) -> pd.DataFrame:
-        """
-        Download and process the NYU Stern ERP data.
-        
-        Returns:
-            Processed DataFrame with date and ERP values
-        """
-        # Download the Excel file
-        excel_content = self.download_excel()
-        if not excel_content:
-            logger.error("Failed to download NYU Stern data")
-            return pd.DataFrame()
-            
-        try:
-            # Read the Excel file
-            df = pd.read_excel(BytesIO(excel_content), sheet_name=self.sheet_name)
-            
-            # Clean column names
-            df.columns = [str(col).strip() for col in df.columns]
-            
-            # Extract relevant columns
-            relevant_cols = ['Start of month', 'T.Bond Rate', 'ERP (T12m)', 'Expected Return']
-            
-            # Check if all relevant columns exist
-            missing_cols = [col for col in relevant_cols if col not in df.columns]
-            if missing_cols:
-                # Attempt to find similar column names
-                for missing_col in missing_cols[:]:
-                    for col in df.columns:
-                        if missing_col.lower() in col.lower():
-                            df.rename(columns={col: missing_col}, inplace=True)
-                            missing_cols.remove(missing_col)
-                            break
-            
-            # If we still have missing columns, log error and return empty dataframe
-            if missing_cols:
-                logger.error(f"Missing columns in NYU Stern data: {missing_cols}")
-                logger.error(f"Available columns: {df.columns.tolist()}")
-                return pd.DataFrame()
-            
-            # Keep only the relevant columns
-            df = df[relevant_cols]
-            
-            # Rename columns to match database schema
-            df.rename(columns={
-                'Start of month': 'date',
-                'T.Bond Rate': 'tbond_rate',
-                'ERP (T12m)': 'erp_t12m',
-                'Expected Return': 'expected_return'
-            }, inplace=True)
-            
-            # Ensure date column is properly formatted as datetime
-            df['date'] = pd.to_datetime(df['date'])
-            
-            # Process each column with percentage values individually by row
-            for col in ['tbond_rate', 'erp_t12m', 'expected_return']:
-                if col not in df.columns:
-                    continue
-                
-                # Convert each value individually by row
-                for idx, value in df[col].items():
-                    # Convert to string for inspection
-                    value_str = str(value)
-                    
-                    # Check if it has a % symbol
-                    if '%' in value_str:
-                        # Remove % and convert
-                        df.at[idx, col] = float(value_str.replace('%', '')) / 100
-                    else:
-                        # Try to convert to float
-                        try:
-                            float_val = float(value)
-                            # If it's a percentage value (e.g., 3.96 instead of 0.0396)
-                            # Values in the data are typically in the 3-5% range as decimals
-                            if float_val > 0.2:  # Threshold for identifying percentages
-                                df.at[idx, col] = float_val / 100
-                            else:
-                                # Already in decimal form
-                                df.at[idx, col] = float_val
-                        except (ValueError, TypeError):
-                            # Leave as is if conversion fails
-                            pass
-            
-            # Sort by date
-            df.sort_values('date', inplace=True)
-            
-            # Drop rows with NaN values
-            df.dropna(inplace=True)
-            
-            return df
-            
-        except Exception as e:
-            logger.exception(f"Error processing NYU Stern data: {e}")
-            return pd.DataFrame()
-    
-    def insert_data(self, data: pd.DataFrame) -> None:
-        """Insert processed data into database"""
-        if data.empty:
-            logger.warning("No data to insert for NYU Stern ERP")
-            return
-        
-        # Format date as string for database
-        data['date'] = data['date'].dt.strftime('%Y-%m-%d')
-        
-        # Use smart update
-        smart_update(
-            azure_connector=self.azure,
-            dataset_name=self.table_name,
-            data_df=data,
-            date_field='date',
-            value_fields=['tbond_rate', 'erp_t12m', 'expected_return']
-        )
-    
-    def update_last_run(self, dataset_name: str) -> None:
-        """Update timestamp of last scraper run"""
-        self.azure.update_last_run(dataset_name)
-    
-    def get_last_run(self, dataset_name: str) -> Optional[datetime]:
-        """Get timestamp of last scraper run"""
-        return self.azure.get_last_run(dataset_name)
-    
-    def should_update(self, dataset_name: str, update_frequency_hours: int = 24) -> bool:
-        """Check if dataset should be updated based on last update time"""
-        return self.azure.should_update(dataset_name, update_frequency_hours)
-
-
-#################################
-# Main Data Collection Function #
-#################################
-
-def main(use_managed_identity: bool = True, storage_account: Optional[str] = None, 
-         key_vault_url: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Main function to run all scrapers.
-    
-    Args:
-        use_managed_identity: Whether to use managed identity for authentication
-        storage_account: Optional storage account name
-        key_vault_url: Optional Key Vault URL
-    
-    Returns:
-        Dict containing summary of the run
-    """
-    start_time = datetime.utcnow()
-    
-    # Initialize Azure connector
-    azure = AzureConnector(
-        use_managed_identity=use_managed_identity,
-        storage_account=storage_account,
-        key_vault_url=key_vault_url
-    )
-    
-    # Initialize tables and containers
-    logger.info("Initializing Azure Storage tables and containers")
-    azure.initialize_tables()
-    azure.initialize_containers()
-    
-    # Configuration for all scrapers
-    # This is a simplified version of the actual configuration
-    # In a real implementation, you would import these from config modules
-    
-    # Base URL for all EDB data sources
-    BASE_URL = "https://www.bde.pr.gov/BDE/PREDDOCS/"
-    
-    # Sample EDB scraper configs
-    edb_configs = {
-        'auto_sales': {
-            'file_name': 'I_AUTO.XLS',
-            'sheet_name': 'AS01',
-            'data_location': 'A6:K18',
-            'table_name': 'autosales',
-            'value_column': 'Sales',
-            'value_type': 'int',
-            'type': 'monthly'
-        },
-        'bankruptcies': {
-            'file_name': 'I_BANKRUPT.XLS',
-            'sheet_name': 'BAN01',
-            'data_location': 'A6:K18',
-            'table_name': 'bankruptcies',
-            'value_column': 'Filings',
-            'value_type': 'int',
-            'type': 'monthly'
-        }
-    }
-    
-    # Sample FRED scraper configs
-    fred_configs = {
-        'federal_funds_rate': {
-            'table_name': 'federalfundsrate',
-            'value_column': 'Rate',
-            'value_type': 'float',
-            'type': 'fred',
-            'fred_series_id': 'DFF',  # Federal Funds Effective Rate
-            'frequency': 'm'  # Monthly average
-        },
-        'real_gdp': {
-            'table_name': 'realgdp',
-            'value_column': 'Value',
-            'value_type': 'float',
-            'type': 'fred',
-            'fred_series_id': 'GDPC1',  # Real Gross Domestic Product
-            'frequency': 'q'  # Quarterly
-        }
-    }
-    
-    # NYU Stern config
-    nyu_config = {
-        'table_name': 'equityriskpremium',
-        'url': 'https://pages.stern.nyu.edu/~adamodar/pc/implprem/ERPbymonth.xlsx',
-        'sheet_name': 'Historical ERP',
-        'type': 'nyu_stern'
-    }
-    
-    # Function to create the appropriate scraper
-    def create_scraper(config):
-        if config['type'] == 'monthly':
-            return MonthlyDataScraper(azure, config)
-        elif config['type'] == 'quarterly':
-            return QuarterlyDataScraper(azure, config)
-        elif config['type'] == 'fred':
-            return FREDScraper(azure, config)
-        elif config['type'] == 'nyu_stern':
-            return NYUSternScraper(azure, config)
-        else:
-            raise ValueError(f"Unknown scraper type: {config['type']}")
-    
-    # Function to run a scraper
-    def run_scraper(scraper, name, config):
-        try:
-            # Check if tables need to be created
-            scraper.create_table()
-            
-            # Handle FRED scrapers differently since they fetch data directly
-            if config['type'] == 'fred':
-                # Fetch and process data directly from FRED API
-                processed_df = scraper.process_data()
-                if processed_df.empty:
-                    logger.warning(f"No data found for {name}")
-                    return 'failed'
-            # Handle NYU Stern scraper
-            elif config['type'] == 'nyu_stern':
-                # Process data directly
-                processed_df = scraper.process_data()
-                if processed_df.empty:
-                    logger.warning(f"No data found for {name}")
-                    return 'failed'
-            else:
-                # Always download and show latest data for EDB scrapers
-                excel_content = scraper.download_excel(BASE_URL, config['file_name'])
-                if not excel_content:
-                    logger.error(f"Failed to download file for {name}")
-                    return 'failed'
-
-                # Extract data from specific sheet and location
-                df = scraper.extract_data(
-                    excel_content, 
-                    config['sheet_name'], 
-                    config['data_location']
-                )
-                if df is None:
-                    logger.error(f"Failed to extract data for {name}")
-                    return 'failed'
-
-                # Process the data
-                processed_df = scraper.process_data(df)
-                if processed_df.empty:
-                    logger.warning(f"No data found for {name}")
-                    return 'failed'
-                
-            # Update data if needed
-            if scraper.should_update(name):
-                logger.info(f"\nUpdating {name}...")
-                try:
-                    scraper.insert_data(processed_df)
-                    scraper.update_last_run(name)
-                    logger.info(f"Successfully updated {name}")
-                    return 'updated'
-                except Exception as e:
-                    logger.exception(f"Error updating {name}: {str(e)}")
-                    return 'failed'
-            else:
-                logger.info(f"No update needed for {name} yet")
-                return 'no_update_needed'
-        except Exception as e:
-            logger.exception
